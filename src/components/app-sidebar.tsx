@@ -8,6 +8,10 @@ import {
   ArrowLeftRight,
   Tags,
   Settings,
+  Users,
+  Wand2,
+  Wallet,
+  Upload,
 } from "lucide-react";
 
 import {
@@ -24,9 +28,13 @@ import {
 
 const items = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
+  { title: "Presupuesto", url: "/presupuesto", icon: Wallet },
   { title: "Cuentas", url: "/cuentas", icon: Landmark },
   { title: "Transacciones", url: "/transacciones", icon: ArrowLeftRight },
+  { title: "Importar", url: "/importar", icon: Upload },
   { title: "Categorías", url: "/categorias", icon: Tags },
+  { title: "Payees", url: "/payees", icon: Users },
+  { title: "Reglas", url: "/reglas", icon: Wand2 },
   { title: "Configuración", url: "/configuracion", icon: Settings },
 ];
 

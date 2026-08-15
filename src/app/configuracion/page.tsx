@@ -1,12 +1,30 @@
 import { eq } from "drizzle-orm";
 
 import { db } from "@/db";
-import { settings } from "@/db/schema";
+import { accounts, budgets, categories, payees, rules, settings, transactions } from "@/db/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatDate } from "@/lib/format";
+import { SettingsForm } from "@/components/settings-form";
+import { DangerZone } from "@/components/danger-zone";
+import {
+  resetAccounts,
+  resetAllExceptAccounts,
+  resetBudgets,
+  resetCategories,
+  resetPayees,
+  resetRules,
+  resetTransactions,
+} from "./actions";
 
 export default async function ConfiguracionPage() {
-  const [s] = await db.select().from(settings).where(eq(settings.id, "default"));
+  const [s, txCount, catCount, payeeCount, ruleCount, budgetCount, accountCount] = await Promise.all([
+    db.select().from(settings).where(eq(settings.id, "default")).then((r) => r[0]),
+    db.select({ id: transactions.id }).from(transactions).then((r) => r.length),
+    db.select({ id: categories.id }).from(categories).then((r) => r.length),
+    db.select({ id: payees.id }).from(payees).then((r) => r.length),
+    db.select({ id: rules.id }).from(rules).then((r) => r.length),
+    db.select({ id: budgets.id }).from(budgets).then((r) => r.length),
+    db.select({ id: accounts.id }).from(accounts).then((r) => r.length),
+  ]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -19,23 +37,45 @@ export default async function ConfiguracionPage() {
         <CardHeader>
           <CardTitle>General</CardTitle>
         </CardHeader>
-        <CardContent className="flex flex-col gap-3 text-sm">
-          <Row label="Moneda base" value={s?.baseCurrency ?? "—"} />
-          <Row label="Fecha de inicio" value={s?.startDate ? formatDate(s.startDate) : "—"} />
-          <Row label="Propietario" value={s?.owner ?? "—"} />
-          <Row label="Versión de schema" value={s?.schemaVersion ?? "—"} />
-          <Row label="Notas" value={s?.notes ?? "—"} />
+        <CardContent>
+          <SettingsForm
+            baseCurrency={s?.baseCurrency ?? "COP"}
+            startDate={s?.startDate ?? new Date()}
+            owner={s?.owner ?? null}
+            notes={s?.notes ?? null}
+          />
+          <p className="mt-4 text-xs text-muted-foreground">
+            Versión de schema: {s?.schemaVersion ?? "—"}
+          </p>
         </CardContent>
       </Card>
-    </div>
-  );
-}
 
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between border-b pb-2 last:border-0 last:pb-0">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="font-medium">{value}</span>
+      <Card className="max-w-md border-destructive/30">
+        <CardHeader>
+          <CardTitle className="text-destructive">Zona de peligro</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Borra datos para empezar de cero. Cada acción pide confirmación escrita y no se puede
+            deshacer.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <DangerZone
+            txCount={txCount}
+            budgetCount={budgetCount}
+            ruleCount={ruleCount}
+            payeeCount={payeeCount}
+            catCount={catCount}
+            accountCount={accountCount}
+            resetTransactions={resetTransactions}
+            resetBudgets={resetBudgets}
+            resetRules={resetRules}
+            resetPayees={resetPayees}
+            resetCategories={resetCategories}
+            resetAccounts={resetAccounts}
+            resetAllExceptAccounts={resetAllExceptAccounts}
+          />
+        </CardContent>
+      </Card>
     </div>
   );
 }

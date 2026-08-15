@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
-import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, uniqueIndex } from "drizzle-orm/sqlite-core";
+import type { RuleCondition, RuleAction } from "@/lib/rules-types";
 
 // --- accounts -------------------------------------------------------------
 // type: bank | wallet | credit_card | cash | investment | other
@@ -33,6 +34,17 @@ export const categories = sqliteTable("categories", {
   notes: text("notes"),
 });
 
+// --- payees -----------------------------------------------------------
+// Normalized "who you paid / who paid you", separate from the free-text
+// description/notes on a transaction. Backs the rules engine and cleaner
+// reporting than free-text descriptions allow.
+export const payees = sqliteTable("payees", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  defaultCategoryId: text("default_category_id").references(() => categories.id),
+  notes: text("notes"),
+});
+
 // --- transactions -----------------------------------------------------------
 // type: expense | income | transfer
 export const transactions = sqliteTable("transactions", {
@@ -48,6 +60,7 @@ export const transactions = sqliteTable("transactions", {
   destinationAmountMinor: real("destination_amount_minor"),
   destinationCurrency: text("destination_currency"),
   categoryId: text("category_id").references(() => categories.id),
+  payeeId: text("payee_id").references(() => payees.id),
   description: text("description"),
   projectTrip: text("project_trip"),
   notes: text("notes"),
@@ -59,6 +72,38 @@ export const transactions = sqliteTable("transactions", {
     .default(sql`(unixepoch())`),
   deletedAt: integer("deleted_at", { mode: "timestamp" }),
 });
+
+// --- rules -----------------------------------------------------------
+// Auto-categorization: conditions are AND-ed together; a matching rule's
+// actions are applied to the transaction. Rules run in sortOrder, later
+// matching rules override earlier ones.
+export const rules = sqliteTable("rules", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name"),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  conditions: text("conditions", { mode: "json" }).$type<RuleCondition[]>().notNull(),
+  actions: text("actions", { mode: "json" }).$type<RuleAction[]>().notNull(),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+// --- budgets -----------------------------------------------------------
+// Envelope budgeting: one row per (category, month). "month" is 'YYYY-MM'.
+// Spent/rollover/available are computed at query time, not stored.
+export const budgets = sqliteTable(
+  "budgets",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    categoryId: text("category_id")
+      .notNull()
+      .references(() => categories.id),
+    month: text("month").notNull(),
+    budgetedMinor: real("budgeted_minor").notNull().default(0),
+  },
+  (t) => [uniqueIndex("budgets_category_month_idx").on(t.categoryId, t.month)]
+);
 
 // --- settings -----------------------------------------------------------
 // Single-row table: app-wide settings. Fixed lookup catalogs (account types,
