@@ -1,6 +1,6 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
 import { db } from "@/db";
@@ -36,6 +36,26 @@ export async function updateAccount(id: string, input: AccountInput) {
 
 export async function deleteAccount(id: string) {
   await db.delete(accounts).where(eq(accounts.id, id));
+  revalidatePath("/cuentas");
+  revalidatePath("/");
+}
+
+export async function bulkDeleteAccounts(ids: string[]) {
+  if (ids.length === 0) return;
+  await db.delete(accounts).where(inArray(accounts.id, ids));
+  revalidatePath("/cuentas");
+  revalidatePath("/");
+}
+
+export type BulkAccountPatch = Partial<{
+  type: AccountType;
+  currency: Currency;
+  status: AccountStatus;
+}>;
+
+export async function bulkUpdateAccounts(ids: string[], patch: BulkAccountPatch) {
+  if (ids.length === 0 || Object.keys(patch).length === 0) return;
+  await db.update(accounts).set(patch).where(inArray(accounts.id, ids));
   revalidatePath("/cuentas");
   revalidatePath("/");
 }

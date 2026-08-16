@@ -1,26 +1,22 @@
-import { asc } from "drizzle-orm";
-import { PencilIcon, PlusIcon } from "lucide-react";
+import { asc, isNull } from "drizzle-orm";
+import { PlusIcon } from "lucide-react";
 
 import { db } from "@/db";
-import { accounts } from "@/db/schema";
+import { accounts, transactions } from "@/db/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
 import { AccountFormDialog } from "@/components/account-form-dialog";
-import { DeleteButton } from "@/components/delete-button";
-import { formatDate, formatMoney } from "@/lib/format";
-import { deleteAccount } from "./actions";
+import { CuentasTable } from "@/components/cuentas-table";
+import { currentBalances } from "@/lib/balance";
 
 export default async function CuentasPage() {
-  const allAccounts = await db.select().from(accounts).orderBy(asc(accounts.name));
+  const [allAccounts, allTransactions] = await Promise.all([
+    db.select().from(accounts).orderBy(asc(accounts.name)),
+    db.select().from(transactions).where(isNull(transactions.deletedAt)),
+  ]);
+  // Maps aren't a valid Server -> Client Component prop (not JSON-serializable),
+  // so the computed balances cross that boundary as a plain object.
+  const balances = Object.fromEntries(currentBalances(allAccounts, allTransactions));
 
   return (
     <div className="flex flex-col gap-6">
@@ -45,57 +41,7 @@ export default async function CuentasPage() {
           <CardTitle>{allAccounts.length} cuentas</CardTitle>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Nombre</TableHead>
-                <TableHead>Tipo</TableHead>
-                <TableHead>Moneda</TableHead>
-                <TableHead>Estado</TableHead>
-                <TableHead>Fecha ref.</TableHead>
-                <TableHead className="text-right">Saldo ref.</TableHead>
-                <TableHead className="text-right">Cupo</TableHead>
-                <TableHead className="w-20"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {allAccounts.map((a) => (
-                <TableRow key={a.id}>
-                  <TableCell className="font-medium">{a.name}</TableCell>
-                  <TableCell className="capitalize">{a.type.replace("_", " ")}</TableCell>
-                  <TableCell>{a.currency}</TableCell>
-                  <TableCell>
-                    <Badge variant={a.status === "active" ? "secondary" : "outline"}>
-                      {a.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>{a.referenceDate ? formatDate(a.referenceDate) : "—"}</TableCell>
-                  <TableCell className="text-right">
-                    {formatMoney(a.referenceBalanceMinor, a.currency)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {a.creditLimitMinor != null ? formatMoney(a.creditLimitMinor, a.currency) : "—"}
-                  </TableCell>
-                  <TableCell className="flex justify-end gap-1">
-                    <AccountFormDialog
-                      account={a}
-                      trigger={
-                        <Button variant="ghost" size="icon-sm">
-                          <PencilIcon />
-                          <span className="sr-only">Editar</span>
-                        </Button>
-                      }
-                    />
-                    <DeleteButton
-                      action={deleteAccount.bind(null, a.id)}
-                      confirmMessage={`¿Eliminar la cuenta "${a.name}"? Esto puede fallar si tiene transacciones asociadas.`}
-                      successMessage="Cuenta eliminada"
-                    />
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <CuentasTable accounts={allAccounts} balances={balances} />
         </CardContent>
       </Card>
     </div>

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { and, asc, eq, isNull } from "drizzle-orm";
 
 import { db } from "@/db";
@@ -123,7 +124,11 @@ export default async function PresupuestoPage({
                 const { budgeted, spent, rollover, available } = computeForCategory(c.id);
                 return (
                   <TableRow key={c.id}>
-                    <TableCell className="font-medium">{c.name}</TableCell>
+                    <TableCell className="font-medium">
+                      <Link href={`/categorias/${c.id}`} className="hover:underline">
+                        {c.name}
+                      </Link>
+                    </TableCell>
                     <TableCell
                       className={`text-right ${rollover < 0 ? "text-destructive" : "text-muted-foreground"}`}
                     >

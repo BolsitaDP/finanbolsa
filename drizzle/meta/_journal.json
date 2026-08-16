@@ -15,6 +15,13 @@
       "when": 1786798290250,
       "tag": "0001_wandering_marvel_apes",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1786827692792,
+      "tag": "0002_add_rule_match_type",
+      "breakpoints": true
     }
   ]
 }

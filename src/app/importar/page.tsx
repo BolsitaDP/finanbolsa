@@ -16,9 +16,9 @@ export default async function ImportarPage() {
       <div>
         <h1 className="text-2xl font-semibold">Importar</h1>
         <p className="text-sm text-muted-foreground">
-          Sube un extracto en PDF de Bancolombia. Los movimientos se agrupan por comercio para que
-          categorices cada uno una sola vez — y puedes guardar la categorización como regla para
-          que futuras importaciones se auto-categoricen.
+          Sube un extracto en PDF de Bancolombia, RappiCard o Nu. Los movimientos se agrupan por
+          comercio para que categorices cada uno una sola vez — y puedes guardar la categorización
+          como regla para que futuras importaciones se auto-categoricen.
         </p>
       </div>
 

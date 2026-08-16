@@ -24,13 +24,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { CategorySelect } from "@/components/category-select";
 
 import { createPayee, updatePayee } from "@/app/payees/actions";
 
@@ -42,7 +36,7 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>;
 
-type Category = { id: string; name: string; kind: string };
+type Category = { id: string; name: string; kind: string; parentCategoryId: string | null };
 
 export function PayeeFormDialog({
   categories,
@@ -116,28 +110,14 @@ export function PayeeFormDialog({
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Categoría por defecto</FormLabel>
-                  <Select
-                    value={field.value}
-                    onValueChange={field.onChange}
-                    items={{
-                      none: "Sin categoría",
-                      ...Object.fromEntries(categories.map((c) => [c.id, c.name])),
-                    }}
-                  >
-                    <FormControl>
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Sin categoría" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value="none">Sin categoría</SelectItem>
-                      {categories.map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <FormControl>
+                    <CategorySelect
+                      categories={categories}
+                      value={field.value}
+                      onValueChange={field.onChange}
+                      className="w-full"
+                    />
+                  </FormControl>
                   <FormMessage />
                 </FormItem>
               )}

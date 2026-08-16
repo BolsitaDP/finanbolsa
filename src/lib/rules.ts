@@ -1,9 +1,16 @@
-import type { transactions } from "@/db/schema";
-import type { RuleAction, RuleCondition } from "./rules-types";
+import type { RuleAction, RuleCondition, RuleMatchType } from "./rules-types";
 
-type Transaction = typeof transactions.$inferSelect;
+// The rule engine only ever reads these four fields, so anything matching
+// this shape can be evaluated — a full transaction row, or a lightweight
+// stand-in built from a not-yet-imported statement row.
+export type RuleMatchable = {
+  description: string | null;
+  payeeId: string | null;
+  accountId: string;
+  amountMinor: number;
+};
 
-function fieldValue(tx: Transaction, field: RuleCondition["field"]): string {
+function fieldValue(tx: RuleMatchable, field: RuleCondition["field"]): string {
   switch (field) {
     case "description":
       return tx.description ?? "";
@@ -16,17 +23,60 @@ function fieldValue(tx: Transaction, field: RuleCondition["field"]): string {
   }
 }
 
-function conditionMatches(tx: Transaction, condition: RuleCondition): boolean {
-  const value = fieldValue(tx, condition.field);
-  if (condition.op === "equals") {
-    return value.toLowerCase() === condition.value.toLowerCase();
+function conditionMatches(tx: RuleMatchable, condition: RuleCondition): boolean {
+  if (condition.field === "amountMinor") {
+    const txNum = tx.amountMinor;
+    const condNum = Number(condition.value);
+    if (Number.isNaN(condNum)) return false;
+    switch (condition.op) {
+      case "equals":
+        return txNum === condNum;
+      case "not_equals":
+        return txNum !== condNum;
+      case "greater_than":
+        return txNum > condNum;
+      case "greater_or_equal":
+        return txNum >= condNum;
+      case "less_than":
+        return txNum < condNum;
+      case "less_or_equal":
+        return txNum <= condNum;
+      default:
+        // Text-only ops (contains, starts_with, ...) don't apply to a number.
+        return false;
+    }
   }
-  return value.toLowerCase().includes(condition.value.toLowerCase());
+
+  const value = fieldValue(tx, condition.field).toLowerCase();
+  const target = condition.value.toLowerCase();
+  switch (condition.op) {
+    case "contains":
+      return value.includes(target);
+    case "not_contains":
+      return !value.includes(target);
+    case "starts_with":
+      return value.startsWith(target);
+    case "ends_with":
+      return value.endsWith(target);
+    case "equals":
+      return value === target;
+    case "not_equals":
+      return value !== target;
+    default:
+      // Numeric-only ops don't apply to text fields.
+      return false;
+  }
 }
 
-export function ruleMatches(tx: Transaction, conditions: RuleCondition[]): boolean {
+export function ruleMatches(
+  tx: RuleMatchable,
+  conditions: RuleCondition[],
+  matchType: RuleMatchType = "all"
+): boolean {
   if (conditions.length === 0) return false;
-  return conditions.every((c) => conditionMatches(tx, c));
+  return matchType === "any"
+    ? conditions.some((c) => conditionMatches(tx, c))
+    : conditions.every((c) => conditionMatches(tx, c));
 }
 
 /** Applies actions to a shallow copy of the transaction's mutable fields. */
@@ -39,4 +89,23 @@ export function applyActions(
     if (action.field === "payeeId") patch.payeeId = action.value;
   }
   return patch;
+}
+
+/**
+ * Removes any condition/action referencing one of `deletedIds` on `field`.
+ * Rule conditions and actions store raw ids in a JSON blob, not a real
+ * foreign key, so deleting a payee/category/account doesn't automatically
+ * clean up rules that reference it — call this from that entity's delete
+ * action to keep rules in sync (a stale action id would otherwise throw a
+ * raw FK error the next time rules are applied to a transaction).
+ */
+export function stripStaleRuleReferences(
+  rule: { conditions: RuleCondition[]; actions: RuleAction[] },
+  field: RuleCondition["field"] | RuleAction["field"],
+  deletedIds: Set<string>
+): { conditions: RuleCondition[]; actions: RuleAction[]; changed: boolean } {
+  const conditions = rule.conditions.filter((c) => !(c.field === field && deletedIds.has(c.value)));
+  const actions = rule.actions.filter((a) => !(a.field === field && deletedIds.has(a.value)));
+  const changed = conditions.length !== rule.conditions.length || actions.length !== rule.actions.length;
+  return { conditions, actions, changed };
 }

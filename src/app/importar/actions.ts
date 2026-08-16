@@ -1,24 +1,50 @@
 "use server";
 
 import { randomUUID } from "node:crypto";
-import { and, eq, gte, isNull, lte } from "drizzle-orm";
+import { and, asc, eq, gte, isNull, lte } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
 import { db } from "@/db";
 import { accounts, categories, payees, rules, transactions } from "@/db/schema";
-import { parseBancolombiaStatement } from "@/lib/statement-parser";
+import { parseBancolombiaStatement, parseNuStatement, parseRappicardStatement } from "@/lib/statement-parser";
 import { cleanMerchantName } from "@/lib/merchant";
+import { ruleMatches } from "@/lib/rules";
 import type { ImportGroupInput, ParsedGroup, ParsedTransaction } from "@/lib/import-types";
 import type { Currency } from "@/lib/enums";
+import type { RuleMatchType } from "@/lib/rules-types";
+
+// Matches on date+amount+description, not just date+amount: credit card
+// statements routinely have two unrelated charges for the same amount on the
+// same day (two coffees, two identical festival wristbands), and matching on
+// amount alone was silently dropping the second one as a false "duplicate".
+function dupSignature(dateIso: string, amountMinor: number, description: string) {
+  return `${dateIso.slice(0, 10)}|${Math.abs(amountMinor)}|${description}`;
+}
 
 export async function parseStatement(accountId: string, formData: FormData) {
   const file = formData.get("file");
   if (!(file instanceof File)) throw new Error("No se recibió ningún archivo");
 
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const rows = await parseBancolombiaStatement(bytes);
+  const fileBytes = new Uint8Array(await file.arrayBuffer());
+  // Try each known statement layout in turn — their row patterns are
+  // distinct enough (slash vs. ISO dates, different decimal formats) that a
+  // parser built for one format won't spuriously match rows from another.
+  // Each parser gets its own real copy via .slice() (not just a new
+  // Uint8Array view over the same ArrayBuffer): pdfjs transfers the buffer
+  // to its worker internally, which detaches it, so a shared buffer breaks
+  // the second parse.
+  const bancolombiaRows = await parseBancolombiaStatement(fileBytes.slice());
+  const rappicardRows = bancolombiaRows.length > 0 ? [] : await parseRappicardStatement(fileBytes.slice());
+  const rows =
+    bancolombiaRows.length > 0
+      ? bancolombiaRows
+      : rappicardRows.length > 0
+        ? rappicardRows
+        : await parseNuStatement(fileBytes.slice());
   if (rows.length === 0) {
-    throw new Error("No se encontraron movimientos en el PDF. ¿Es un extracto de Bancolombia?");
+    throw new Error(
+      "No se encontraron movimientos en el PDF. Formatos soportados: extracto de Bancolombia, RappiCard o Nu."
+    );
   }
 
   const groupsByKey = new Map<string, ParsedTransaction[]>();
@@ -37,9 +63,13 @@ export async function parseStatement(accountId: string, formData: FormData) {
 
   const [existingPayees, existingRules, existingTx] = await Promise.all([
     db.select().from(payees),
-    db.select().from(rules).where(eq(rules.enabled, true)),
+    db.select().from(rules).where(eq(rules.enabled, true)).orderBy(asc(rules.sortOrder)),
     db
-      .select({ date: transactions.date, amountMinor: transactions.amountMinor })
+      .select({
+        date: transactions.date,
+        amountMinor: transactions.amountMinor,
+        description: transactions.description,
+      })
       .from(transactions)
       .where(
         and(
@@ -51,17 +81,26 @@ export async function parseStatement(accountId: string, formData: FormData) {
       ),
   ]);
 
-  const existingKeys = new Set(
-    existingTx.map((t) => `${t.date.toISOString().slice(0, 10)}|${t.amountMinor}`)
-  );
+  // A budget of remaining matches per signature, decremented as groups claim
+  // them below — so N existing rows only ever mark N (not all) same-signature
+  // new rows as duplicates.
+  const existingCounts = new Map<string, number>();
+  for (const t of existingTx) {
+    const key = dupSignature(t.date.toISOString(), t.amountMinor, t.description ?? "");
+    existingCounts.set(key, (existingCounts.get(key) ?? 0) + 1);
+  }
 
   const groups: ParsedGroup[] = [...groupsByKey.entries()]
     .map(([key, txs]) => {
       const totalAmountMinor = txs.reduce((s, t) => s + t.amountMinor, 0);
       const rawDescription = rawByKey.get(key)!;
-      const duplicateCount = txs.filter(
-        (t) => existingKeys.has(`${t.date.slice(0, 10)}|${Math.abs(t.amountMinor)}`)
-      ).length;
+      const duplicateCount = txs.filter((t) => {
+        const sig = dupSignature(t.date, t.amountMinor, t.description);
+        const remaining = existingCounts.get(sig) ?? 0;
+        if (remaining === 0) return false;
+        existingCounts.set(sig, remaining - 1);
+        return true;
+      }).length;
 
       let suggestedPayeeId: string | null = null;
       let suggestedCategoryId: string | null = null;
@@ -73,11 +112,15 @@ export async function parseStatement(accountId: string, formData: FormData) {
       }
 
       for (const rule of existingRules) {
-        const conditions = rule.conditions;
-        const descConditions = conditions.filter((c) => c.field === "description" && c.op === "contains");
-        if (descConditions.length === 0) continue;
-        const matches = descConditions.every((c) =>
-          rawDescription.toLowerCase().includes(c.value.toLowerCase())
+        // A group merges several raw rows under one merchant label, so a
+        // rule (e.g. an amount threshold) is applied if it matches any one
+        // of them — matches the "any row" granularity a group can act on.
+        const matches = txs.some((t) =>
+          ruleMatches(
+            { description: t.description, payeeId: null, accountId, amountMinor: Math.abs(t.amountMinor) },
+            rule.conditions,
+            rule.matchType as RuleMatchType
+          )
         );
         if (!matches) continue;
         for (const action of rule.actions) {
@@ -132,6 +175,25 @@ export async function bulkImportTransactions(
   const payeeByName = new Map(existingPayees.map((p) => [p.name.toLowerCase(), p]));
   const ruleSignatures = new Set(existingRulesRaw.map((r) => JSON.stringify(r.conditions)));
 
+  // Same budget-based dedup as the preview in parseStatement: fetched once
+  // up front rather than re-queried per row, so a batch that legitimately
+  // contains two same-day, same-amount, same-description charges (re-running
+  // the same import twice) is distinguished from one that just happens to
+  // have two unrelated same-amount charges on the same day.
+  const existingForAccount = await db
+    .select({
+      date: transactions.date,
+      amountMinor: transactions.amountMinor,
+      description: transactions.description,
+    })
+    .from(transactions)
+    .where(and(eq(transactions.accountId, accountId), isNull(transactions.deletedAt)));
+  const existingCounts = new Map<string, number>();
+  for (const t of existingForAccount) {
+    const key = dupSignature(t.date.toISOString(), t.amountMinor, t.description ?? "");
+    existingCounts.set(key, (existingCounts.get(key) ?? 0) + 1);
+  }
+
   let imported = 0;
   let skippedDuplicates = 0;
   let rulesCreated = 0;
@@ -181,29 +243,15 @@ export async function bulkImportTransactions(
     }
 
     for (const tx of group.transactions) {
-      const date = new Date(tx.date);
-      const dayStart = new Date(date);
-      dayStart.setHours(0, 0, 0, 0);
-      const dayEnd = new Date(date);
-      dayEnd.setHours(23, 59, 59, 999);
-
-      const dupes = await db
-        .select({ id: transactions.id })
-        .from(transactions)
-        .where(
-          and(
-            eq(transactions.accountId, accountId),
-            isNull(transactions.deletedAt),
-            eq(transactions.amountMinor, Math.abs(tx.amountMinor)),
-            gte(transactions.date, dayStart),
-            lte(transactions.date, dayEnd)
-          )
-        );
-      if (dupes.length > 0) {
+      const sig = dupSignature(tx.date, tx.amountMinor, tx.description);
+      const remaining = existingCounts.get(sig) ?? 0;
+      if (remaining > 0) {
+        existingCounts.set(sig, remaining - 1);
         skippedDuplicates++;
         continue;
       }
 
+      const date = new Date(tx.date);
       await db.insert(transactions).values({
         date,
         type: group.type,
@@ -214,7 +262,7 @@ export async function bulkImportTransactions(
         categoryId: group.categoryId,
         payeeId,
         description: tx.description,
-        notes: "Importado de extracto Bancolombia",
+        notes: "Importado de extracto",
       });
       imported++;
     }

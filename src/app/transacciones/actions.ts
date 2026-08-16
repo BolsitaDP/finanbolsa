@@ -1,6 +1,6 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
 import { db } from "@/db";
@@ -42,5 +42,27 @@ export async function updateTransaction(id: number, input: TransactionInput) {
 
 export async function softDeleteTransaction(id: number) {
   await db.update(transactions).set({ deletedAt: new Date() }).where(eq(transactions.id, id));
+  revalidateAll();
+}
+
+export async function bulkSoftDeleteTransactions(ids: number[]) {
+  if (ids.length === 0) return;
+  await db.update(transactions).set({ deletedAt: new Date() }).where(inArray(transactions.id, ids));
+  revalidateAll();
+}
+
+export type BulkTransactionPatch = Partial<{
+  type: TransactionType;
+  accountId: string;
+  destinationAccountId: string | null;
+  categoryId: string | null;
+  payeeId: string | null;
+  projectTrip: string | null;
+  notes: string | null;
+}>;
+
+export async function bulkUpdateTransactions(ids: number[], patch: BulkTransactionPatch) {
+  if (ids.length === 0 || Object.keys(patch).length === 0) return;
+  await db.update(transactions).set(patch).where(inArray(transactions.id, ids));
   revalidateAll();
 }

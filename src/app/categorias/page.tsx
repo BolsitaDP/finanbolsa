@@ -1,22 +1,12 @@
 import { asc } from "drizzle-orm";
-import { PencilIcon, PlusIcon } from "lucide-react";
+import { PlusIcon } from "lucide-react";
 
 import { db } from "@/db";
 import { categories } from "@/db/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
 import { CategoryFormDialog } from "@/components/category-form-dialog";
-import { DeleteButton } from "@/components/delete-button";
-import { deleteCategory } from "./actions";
+import { CategoriasTable } from "@/components/categorias-table";
 
 export default async function CategoriasPage() {
   const allCategories = await db.select().from(categories).orderBy(asc(categories.name));
@@ -66,52 +56,7 @@ export default async function CategoriasPage() {
           <CardTitle>Todas las categorías</CardTitle>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Nombre</TableHead>
-                <TableHead>Categoría padre</TableHead>
-                <TableHead>Tipo</TableHead>
-                <TableHead>Estado</TableHead>
-                <TableHead className="w-20"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {orderedCategories.map((c) => (
-                <TableRow key={c.id}>
-                  <TableCell className={c.parentCategoryId ? "pl-6 text-muted-foreground" : "font-medium"}>
-                    {c.parentCategoryId ? `↳ ${c.name}` : c.name}
-                  </TableCell>
-                  <TableCell>
-                    {c.parentCategoryId ? nameById.get(c.parentCategoryId) ?? c.parentCategoryId : "—"}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={c.kind === "expense" ? "destructive" : "secondary"}>
-                      {c.kind}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>{c.status}</TableCell>
-                  <TableCell className="flex justify-end gap-1">
-                    <CategoryFormDialog
-                      categories={allCategories}
-                      category={c}
-                      trigger={
-                        <Button variant="ghost" size="icon-sm">
-                          <PencilIcon />
-                          <span className="sr-only">Editar</span>
-                        </Button>
-                      }
-                    />
-                    <DeleteButton
-                      action={deleteCategory.bind(null, c.id)}
-                      confirmMessage={`¿Eliminar la categoría "${c.name}"? Esto puede fallar si tiene transacciones o subcategorías asociadas.`}
-                      successMessage="Categoría eliminada"
-                    />
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <CategoriasTable categories={allCategories} orderedCategories={orderedCategories} />
         </CardContent>
       </Card>
     </div>

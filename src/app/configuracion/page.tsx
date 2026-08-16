@@ -1,8 +1,10 @@
 import { eq } from "drizzle-orm";
+import { FileJson, FileSpreadsheet, FileText } from "lucide-react";
 
 import { db } from "@/db";
 import { accounts, budgets, categories, payees, rules, settings, transactions } from "@/db/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { SettingsForm } from "@/components/settings-form";
 import { DangerZone } from "@/components/danger-zone";
 import {
@@ -47,6 +49,27 @@ export default async function ConfiguracionPage() {
           <p className="mt-4 text-xs text-muted-foreground">
             Versión de schema: {s?.schemaVersion ?? "—"}
           </p>
+        </CardContent>
+      </Card>
+
+      <Card className="max-w-md">
+        <CardHeader>
+          <CardTitle>Exportar datos</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Descarga un respaldo de tus datos — antes de usar la zona de peligro, o para llevarlos a
+            otra parte.
+          </p>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2">
+          <Button variant="outline" size="sm" nativeButton={false} render={<a href="/api/export?format=json" />}>
+            <FileJson /> JSON — respaldo completo
+          </Button>
+          <Button variant="outline" size="sm" nativeButton={false} render={<a href="/api/export?format=csv" />}>
+            <FileText /> CSV — transacciones
+          </Button>
+          <Button variant="outline" size="sm" nativeButton={false} render={<a href="/api/export?format=xlsx" />}>
+            <FileSpreadsheet /> Excel — todo en un libro
+          </Button>
         </CardContent>
       </Card>
 

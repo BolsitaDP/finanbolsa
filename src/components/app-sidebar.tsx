@@ -12,6 +12,7 @@ import {
   Wand2,
   Wallet,
   Upload,
+  Repeat,
 } from "lucide-react";
 
 import {
@@ -31,6 +32,7 @@ const items = [
   { title: "Presupuesto", url: "/presupuesto", icon: Wallet },
   { title: "Cuentas", url: "/cuentas", icon: Landmark },
   { title: "Transacciones", url: "/transacciones", icon: ArrowLeftRight },
+  { title: "Recurrentes", url: "/recurrentes", icon: Repeat },
   { title: "Importar", url: "/importar", icon: Upload },
   { title: "Categorías", url: "/categorias", icon: Tags },
   { title: "Payees", url: "/payees", icon: Users },

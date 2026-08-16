@@ -74,13 +74,14 @@ export const transactions = sqliteTable("transactions", {
 });
 
 // --- rules -----------------------------------------------------------
-// Auto-categorization: conditions are AND-ed together; a matching rule's
-// actions are applied to the transaction. Rules run in sortOrder, later
-// matching rules override earlier ones.
+// Auto-categorization: conditions combine via matchType ("all" = AND, "any"
+// = OR); a matching rule's actions are applied to the transaction. Rules run
+// in sortOrder, later matching rules override earlier ones.
 export const rules = sqliteTable("rules", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   name: text("name"),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  matchType: text("match_type").notNull().default("all"),
   conditions: text("conditions", { mode: "json" }).$type<RuleCondition[]>().notNull(),
   actions: text("actions", { mode: "json" }).$type<RuleAction[]>().notNull(),
   sortOrder: integer("sort_order").notNull().default(0),

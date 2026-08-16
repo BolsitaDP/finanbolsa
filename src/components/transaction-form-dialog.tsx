@@ -31,6 +31,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { CategorySelect } from "@/components/category-select";
 
 import { createTransaction, updateTransaction } from "@/app/transacciones/actions";
 import { CURRENCIES, TRANSACTION_TYPES } from "@/lib/enums";
@@ -55,7 +56,7 @@ const schema = z.object({
 type FormValues = z.infer<typeof schema>;
 
 type Account = { id: string; name: string; currency: string };
-type Category = { id: string; name: string; kind: string };
+type Category = { id: string; name: string; kind: string; parentCategoryId: string | null };
 type Payee = { id: string; name: string };
 
 type Transaction = {
@@ -290,28 +291,14 @@ export function TransactionFormDialog({
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Categoría</FormLabel>
-                      <Select
-                        value={field.value}
-                        onValueChange={field.onChange}
-                        items={{
-                          none: "Sin categoría",
-                          ...Object.fromEntries(categories.map((c) => [c.id, c.name])),
-                        }}
-                      >
-                        <FormControl>
-                          <SelectTrigger className="w-full">
-                            <SelectValue placeholder="Sin categoría" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="none">Sin categoría</SelectItem>
-                          {categories.map((c) => (
-                            <SelectItem key={c.id} value={c.id}>
-                              {c.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <FormControl>
+                        <CategorySelect
+                          categories={categories}
+                          value={field.value}
+                          onValueChange={field.onChange}
+                          className="w-full"
+                        />
+                      </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}

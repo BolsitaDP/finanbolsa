@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { useFieldArray, useForm, useFormContext } from "react-hook-form";
+import { useEffect, useState, useTransition } from "react";
+import { useFieldArray, useForm, useFormContext, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
@@ -25,9 +25,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { CategorySelect } from "@/components/category-select";
 
-import { createRule, updateRule } from "@/app/reglas/actions";
-import { RULE_FIELDS, RULE_OPS, type RuleAction, type RuleCondition } from "@/lib/rules-types";
+import { createRule, previewRuleMatches, updateRule, type RulePreviewSample } from "@/app/reglas/actions";
+import {
+  OPS_BY_FIELD,
+  RULE_FIELDS,
+  RULE_MATCH_TYPES,
+  RULE_OPS,
+  type RuleAction,
+  type RuleCondition,
+  type RuleMatchType,
+} from "@/lib/rules-types";
+import { formatDate, formatMoney } from "@/lib/format";
 
 const conditionSchema = z.object({
   field: z.enum(RULE_FIELDS),
@@ -42,13 +52,14 @@ const actionSchema = z.object({
 
 const schema = z.object({
   name: z.string(),
+  matchType: z.enum(RULE_MATCH_TYPES),
   conditions: z.array(conditionSchema).min(1, "Agrega al menos una condición"),
   actions: z.array(actionSchema).min(1, "Agrega al menos una acción"),
 });
 
 type FormValues = z.infer<typeof schema>;
 
-type Category = { id: string; name: string };
+type Category = { id: string; name: string; kind: string; parentCategoryId: string | null };
 type Payee = { id: string; name: string };
 type Account = { id: string; name: string };
 
@@ -57,6 +68,19 @@ const FIELD_LABELS: Record<(typeof RULE_FIELDS)[number], string> = {
   payeeId: "Payee",
   accountId: "Cuenta",
   amountMinor: "Monto",
+};
+
+const OP_LABELS: Record<(typeof RULE_OPS)[number], string> = {
+  contains: "contiene",
+  not_contains: "no contiene",
+  starts_with: "empieza con",
+  ends_with: "termina con",
+  equals: "es",
+  not_equals: "no es",
+  greater_than: "mayor que",
+  greater_or_equal: "mayor o igual a",
+  less_than: "menor que",
+  less_or_equal: "menor o igual a",
 };
 
 export function RuleFormDialog({
@@ -72,6 +96,7 @@ export function RuleFormDialog({
   rule?: {
     id: number;
     name: string | null;
+    matchType: string;
     conditions: RuleCondition[];
     actions: RuleAction[];
   };
@@ -84,6 +109,7 @@ export function RuleFormDialog({
     resolver: zodResolver(schema),
     defaultValues: {
       name: rule?.name ?? "",
+      matchType: (rule?.matchType as RuleMatchType) ?? "all",
       conditions: rule?.conditions ?? [{ field: "description", op: "contains", value: "" }],
       actions: rule?.actions ?? [{ field: "categoryId", value: "" }],
     },
@@ -92,11 +118,37 @@ export function RuleFormDialog({
   const conditionFields = useFieldArray({ control: form.control, name: "conditions" });
   const actionFields = useFieldArray({ control: form.control, name: "actions" });
 
+  const watchedConditions = useWatch({ control: form.control, name: "conditions" });
+  const watchedMatchType = useWatch({ control: form.control, name: "matchType" });
+  const validConditions = watchedConditions.filter((c) => c.value.trim() !== "");
+  const [preview, setPreview] = useState<{ count: number; sample: RulePreviewSample[] } | null>(null);
+  const [previewPending, startPreviewTransition] = useTransition();
+
+  // Live dry-run: shows how many existing transactions this rule (as
+  // currently being edited) would match, so overlap with existing rules or
+  // an overly broad/narrow pattern is visible before saving — debounced so
+  // it doesn't hit the server on every keystroke. Rendering below is gated
+  // on validConditions.length, so a stale `preview` value from before the
+  // last condition was cleared just never gets shown — no need to reset it
+  // here (which would mean calling setState synchronously in the effect).
+  useEffect(() => {
+    if (!open || validConditions.length === 0) return;
+    const handle = setTimeout(() => {
+      startPreviewTransition(async () => {
+        const result = await previewRuleMatches(validConditions as RuleCondition[], watchedMatchType);
+        setPreview(result);
+      });
+    }, 400);
+    return () => clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, JSON.stringify(watchedConditions), watchedMatchType]);
+
   function onSubmit(values: FormValues) {
     startTransition(async () => {
       try {
         const input = {
           name: values.name || null,
+          matchType: values.matchType,
           conditions: values.conditions,
           actions: values.actions,
         };
@@ -108,6 +160,7 @@ export function RuleFormDialog({
           toast.success("Regla creada");
           form.reset({
             name: "",
+            matchType: "all",
             conditions: [{ field: "description", op: "contains", value: "" }],
             actions: [{ field: "categoryId", value: "" }],
           });
@@ -120,7 +173,13 @@ export function RuleFormDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setPreview(null);
+      }}
+    >
       <DialogTrigger render={trigger} />
       <DialogContent className="max-w-lg">
         <DialogHeader>
@@ -142,8 +201,28 @@ export function RuleFormDialog({
             />
 
             <div className="flex flex-col gap-2">
-              <div className="text-xs font-medium text-muted-foreground">
-                Si se cumplen todas estas condiciones
+              <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                <span>Si se cumplen</span>
+                <FormField
+                  control={form.control}
+                  name="matchType"
+                  render={({ field }) => (
+                    <Select
+                      value={field.value}
+                      onValueChange={field.onChange}
+                      items={{ all: "todas", any: "alguna" }}
+                    >
+                      <SelectTrigger className="h-6 w-24 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">todas</SelectItem>
+                        <SelectItem value="any">alguna</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
+                <span>de estas condiciones</span>
               </div>
               {conditionFields.fields.map((f, i) => (
                 <ConditionRow
@@ -168,6 +247,31 @@ export function RuleFormDialog({
               >
                 <PlusIcon /> Agregar condición
               </Button>
+
+              {validConditions.length > 0 && preview && (
+                <div className="rounded-md border bg-muted/30 p-2 text-xs">
+                  <div className={`font-medium ${previewPending ? "opacity-50" : ""}`}>
+                    {preview.count === 0
+                      ? "No coincide con ninguna transacción actual."
+                      : `Coincide con ${preview.count} ${preview.count === 1 ? "transacción actual" : "transacciones actuales"}`}
+                  </div>
+                  {preview.sample.length > 0 && (
+                    <ul className="mt-1 flex flex-col gap-0.5 text-muted-foreground">
+                      {preview.sample.map((s, i) => (
+                        <li key={i} className="truncate">
+                          {formatDate(new Date(s.date))} · {s.description ?? "—"} ·{" "}
+                          {formatMoney(s.amountMinor, s.currency)}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {preview.count > preview.sample.length && (
+                    <div className="mt-1 text-muted-foreground">
+                      y {preview.count - preview.sample.length} más...
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="flex flex-col gap-2">
@@ -218,6 +322,7 @@ function ConditionRow({
 }) {
   const form = useFormContext<FormValues>();
   const fieldType = form.watch(`conditions.${index}.field`);
+  const availableOps = OPS_BY_FIELD[fieldType];
 
   return (
     <div className="flex items-start gap-1.5">
@@ -227,7 +332,18 @@ function ConditionRow({
         render={({ field }) => (
           <Select
             value={field.value}
-            onValueChange={field.onChange}
+            onValueChange={(v) => {
+              if (!v) return;
+              field.onChange(v);
+              // The op may not be valid for the newly-selected field (e.g.
+              // "empieza con" doesn't apply to Monto) — fall back to the
+              // first op that does.
+              const validOps = OPS_BY_FIELD[v as (typeof RULE_FIELDS)[number]];
+              const currentOp = form.getValues(`conditions.${index}.op`);
+              if (!validOps.includes(currentOp)) {
+                form.setValue(`conditions.${index}.op`, validOps[0]);
+              }
+            }}
             items={Object.fromEntries(RULE_FIELDS.map((f) => [f, FIELD_LABELS[f]]))}
           >
             <SelectTrigger className="w-28 shrink-0">
@@ -250,15 +366,15 @@ function ConditionRow({
           <Select
             value={field.value}
             onValueChange={field.onChange}
-            items={Object.fromEntries(RULE_OPS.map((op) => [op, op === "contains" ? "contiene" : "es"]))}
+            items={Object.fromEntries(availableOps.map((op) => [op, OP_LABELS[op]]))}
           >
-            <SelectTrigger className="w-24 shrink-0">
+            <SelectTrigger className="w-36 shrink-0">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {RULE_OPS.map((op) => (
+              {availableOps.map((op) => (
                 <SelectItem key={op} value={op}>
-                  {op === "contains" ? "contiene" : "es"}
+                  {OP_LABELS[op]}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -306,7 +422,12 @@ function ConditionRow({
                   </SelectContent>
                 </Select>
               ) : (
-                <Input placeholder="Valor" {...field} />
+                <Input
+                  type={fieldType === "amountMinor" ? "number" : "text"}
+                  step={fieldType === "amountMinor" ? "any" : undefined}
+                  placeholder="Valor"
+                  {...field}
+                />
               )}
             </FormControl>
             <FormMessage />
@@ -335,7 +456,6 @@ function ActionRow({
 }) {
   const form = useFormContext<FormValues>();
   const fieldType = form.watch(`actions.${index}.field`);
-  const options = fieldType === "payeeId" ? payees : categories;
 
   return (
     <div className="flex items-start gap-1.5">
@@ -364,22 +484,33 @@ function ActionRow({
         render={({ field }) => (
           <FormItem className="min-w-0 flex-1">
             <FormControl>
-              <Select
-                value={field.value}
-                onValueChange={field.onChange}
-                items={Object.fromEntries(options.map((o) => [o.id, o.name]))}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Selecciona..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {options.map((o) => (
-                    <SelectItem key={o.id} value={o.id}>
-                      {o.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {fieldType === "categoryId" ? (
+                <CategorySelect
+                  categories={categories}
+                  value={field.value}
+                  onValueChange={field.onChange}
+                  includeNone={false}
+                  noneLabel="Selecciona..."
+                  className="w-full"
+                />
+              ) : (
+                <Select
+                  value={field.value}
+                  onValueChange={field.onChange}
+                  items={Object.fromEntries(payees.map((p) => [p.id, p.name]))}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Selecciona..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {payees.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </FormControl>
             <FormMessage />
           </FormItem>
