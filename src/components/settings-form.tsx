@@ -9,13 +9,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Combobox } from "@/components/ui/combobox";
 
 import { updateSettings } from "@/app/configuracion/actions";
 import { CURRENCIES } from "@/lib/enums";
@@ -78,24 +72,14 @@ export function SettingsForm({
           render={({ field }) => (
             <FormItem>
               <FormLabel>Moneda base</FormLabel>
-              <Select
-                value={field.value}
-                onValueChange={field.onChange}
-                items={Object.fromEntries(CURRENCIES.map((c) => [c, c]))}
-              >
-                <FormControl>
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                </FormControl>
-                <SelectContent>
-                  {CURRENCIES.map((c) => (
-                    <SelectItem key={c} value={c}>
-                      {c}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <FormControl>
+                <Combobox
+                  value={field.value}
+                  onValueChange={field.onChange}
+                  items={Object.fromEntries(CURRENCIES.map((c) => [c, c]))}
+                  className="w-full"
+                />
+              </FormControl>
               <FormMessage />
             </FormItem>
           )}

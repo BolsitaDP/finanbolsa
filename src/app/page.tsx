@@ -3,7 +3,7 @@ import { desc, isNull } from "drizzle-orm";
 import { ArrowDownIcon, ArrowUpIcon } from "lucide-react";
 
 import { db } from "@/db";
-import { accounts, budgets, categories, transactions } from "@/db/schema";
+import { accounts, budgets, categories, transactions, transactionSplits } from "@/db/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { NetWorthChart, CHART_COLORS } from "@/components/net-worth-chart";
 import { currentBalances, netWorthTrend } from "@/lib/balance";
 import { spendByCategoryForMonth, totalForMonth } from "@/lib/spending-stats";
+import { groupSplitsByTransaction } from "@/lib/splits";
 import { monthKey, monthLabel, shiftMonth } from "@/lib/month";
 import { formatDate, formatMoney } from "@/lib/format";
 
@@ -37,12 +38,14 @@ function MonthDelta({ current, previous, higherIsBad }: { current: number; previ
 }
 
 export default async function DashboardPage() {
-  const [allAccounts, allTransactions, allCategories, allBudgets] = await Promise.all([
+  const [allAccounts, allTransactions, allCategories, allBudgets, allSplits] = await Promise.all([
     db.select().from(accounts),
     db.select().from(transactions).where(isNull(transactions.deletedAt)),
     db.select().from(categories),
     db.select().from(budgets),
+    db.select().from(transactionSplits),
   ]);
+  const splitsByTx = groupSplitsByTransaction(allSplits);
 
   const categoryName = new Map(allCategories.map((c) => [c.id, c.name]));
   const accountName = new Map(allAccounts.map((a) => [a.id, a.name]));
@@ -58,7 +61,7 @@ export default async function DashboardPage() {
   const incomeLastMonth = totalForMonth(allTransactions, lastMonth, "income");
   const monthCurrencies = [...new Set([...expenseThisMonth.keys(), ...incomeThisMonth.keys()])];
 
-  const spendThisMonth = spendByCategoryForMonth(allTransactions, currentMonth);
+  const spendThisMonth = spendByCategoryForMonth(allTransactions, currentMonth, splitsByTx);
   const spendCurrencies = [...new Set(spendThisMonth.map((c) => c.currency))];
 
   const budgetsThisMonth = allBudgets.filter((b) => b.month === currentMonth);

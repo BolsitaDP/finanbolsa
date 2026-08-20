@@ -24,13 +24,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Combobox } from "@/components/ui/combobox";
 
 import { createCategory, updateCategory } from "@/app/categorias/actions";
 import { CATEGORY_KINDS, CATEGORY_STATUSES } from "@/lib/enums";
@@ -134,28 +128,18 @@ export function CategoryFormDialog({
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Categoría padre</FormLabel>
-                  <Select
-                    value={field.value}
-                    onValueChange={field.onChange}
-                    items={{
-                      none: "Ninguna (categoría principal)",
-                      ...Object.fromEntries(selectableParents.map((c) => [c.id, c.name])),
-                    }}
-                  >
-                    <FormControl>
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Ninguna" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value="none">Ninguna (categoría principal)</SelectItem>
-                      {selectableParents.map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <FormControl>
+                    <Combobox
+                      value={field.value}
+                      onValueChange={field.onChange}
+                      items={{
+                        none: "Ninguna (categoría principal)",
+                        ...Object.fromEntries(selectableParents.map((c) => [c.id, c.name])),
+                      }}
+                      placeholder="Ninguna"
+                      className="w-full"
+                    />
+                  </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
@@ -167,24 +151,14 @@ export function CategoryFormDialog({
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Tipo</FormLabel>
-                    <Select
-                      value={field.value}
-                      onValueChange={field.onChange}
-                      items={Object.fromEntries(CATEGORY_KINDS.map((k) => [k, k]))}
-                    >
-                      <FormControl>
-                        <SelectTrigger className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {CATEGORY_KINDS.map((k) => (
-                          <SelectItem key={k} value={k}>
-                            {k}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <FormControl>
+                      <Combobox
+                        value={field.value}
+                        onValueChange={field.onChange}
+                        items={Object.fromEntries(CATEGORY_KINDS.map((k) => [k, k]))}
+                        className="w-full"
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -195,24 +169,14 @@ export function CategoryFormDialog({
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Estado</FormLabel>
-                    <Select
-                      value={field.value}
-                      onValueChange={field.onChange}
-                      items={Object.fromEntries(CATEGORY_STATUSES.map((s) => [s, s]))}
-                    >
-                      <FormControl>
-                        <SelectTrigger className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {CATEGORY_STATUSES.map((s) => (
-                          <SelectItem key={s} value={s}>
-                            {s}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <FormControl>
+                      <Combobox
+                        value={field.value}
+                        onValueChange={field.onChange}
+                        items={Object.fromEntries(CATEGORY_STATUSES.map((s) => [s, s]))}
+                        className="w-full"
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}

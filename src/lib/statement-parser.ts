@@ -15,7 +15,28 @@ export type ParsedStatementRow = {
   amountMinor: number;
 };
 
-const ROW_RE = /^(\d{1,2})\/(\d{1,2})\s+(.+?)\s+(-?[\d,]+\.\d{2})\s+[\d,]+\.\d{2}$/;
+/**
+ * `unrecognized` holds the raw text of every line that looked like a
+ * transaction row (matched the parser's row-anchor pattern, e.g. starting
+ * with a date) but didn't fit any row shape the parser knows how to
+ * interpret — as opposed to rows that were deliberately skipped for a known
+ * reason (a payment confirmation, a later installment, a "-" tarjeta row).
+ * Surfacing these lets the import review UI warn when a statement contains a
+ * row type the parser doesn't understand yet, instead of silently dropping
+ * it (as happened with Nu "Devolución" refund rows before they got explicit
+ * handling).
+ */
+export type ParseResult = {
+  rows: ParsedStatementRow[];
+  unrecognized: string[];
+};
+
+const ROW_ANCHOR_RE = /^\d{1,2}\/\d{1,2}\s/;
+// The value column's integer part is dropped when it's zero (e.g. tiny
+// interest credits under 1 peso print as ".94", not "0.94") — [\d,]* (not +)
+// accepts that. The balance column doesn't need the same treatment since a
+// running account balance realistically never lands under 1 peso.
+const ROW_RE = /^(\d{1,2})\/(\d{1,2})\s+(.+?)\s+(-?[\d,]*\.\d{2})\s+[\d,]+\.\d{2}$/;
 const DATE_RANGE_RE = /(?:DESDE|HASTA):\s*(\d{4})\/(\d{2})\/(\d{2})/g;
 
 /**
@@ -28,11 +49,12 @@ const DATE_RANGE_RE = /(?:DESDE|HASTA):\s*(\d{4})\/(\d{2})\/(\d{2})/g;
  * sorts each cluster by X position, which reconstructs correct row order
  * regardless of how the PDF's content stream ordered things.
  */
-export async function parseBancolombiaStatement(data: Uint8Array): Promise<ParsedStatementRow[]> {
+export async function parseBancolombiaStatement(data: Uint8Array): Promise<ParseResult> {
   const doc = await getDocument({ data }).promise;
 
   const dateRanges: { year: number; month: number }[] = [];
   const rows: ParsedStatementRow[] = [];
+  const unrecognized: string[] = [];
 
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p);
@@ -65,8 +87,13 @@ export async function parseBancolombiaStatement(data: Uint8Array): Promise<Parse
         .replace(/\s+/g, " ")
         .trim();
 
+      if (!ROW_ANCHOR_RE.test(line)) continue;
+
       const m = line.match(ROW_RE);
-      if (!m) continue;
+      if (!m) {
+        unrecognized.push(line);
+        continue;
+      }
 
       const day = Number(m[1]);
       const month = Number(m[2]);
@@ -77,7 +104,7 @@ export async function parseBancolombiaStatement(data: Uint8Array): Promise<Parse
     }
   }
 
-  return rows;
+  return { rows, unrecognized };
 }
 
 /** Statements can span a year boundary (e.g. Dec–Jan); pick the year from
@@ -128,9 +155,10 @@ function parseLatinAmount(raw: string): number | null {
  * statement from before the user's first import will never be recorded,
  * since by the time it's visible here it's already past cuota 1.
  */
-export async function parseRappicardStatement(data: Uint8Array): Promise<ParsedStatementRow[]> {
+export async function parseRappicardStatement(data: Uint8Array): Promise<ParseResult> {
   const doc = await getDocument({ data }).promise;
   const rows: ParsedStatementRow[] = [];
+  const unrecognized: string[] = [];
 
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p);
@@ -151,7 +179,11 @@ export async function parseRappicardStatement(data: Uint8Array): Promise<ParsedS
 
     for (let i = 0; i < lines.length; i++) {
       const cells = lines[i];
-      if (cells.length < 8) continue;
+      if (cells.length < 2) continue;
+      // "Virtual"/"-" + an ISO date is the row anchor: strong enough (two
+      // independent columns) that from here on, any row that doesn't end up
+      // imported should match a known skip reason below or else get flagged
+      // as unrecognized — it shouldn't just silently vanish.
       if (cells[0] !== "Virtual" && cells[0] !== "-") continue;
       if (!RAPPICARD_DATE_RE.test(cells[1])) continue;
 
@@ -160,6 +192,11 @@ export async function parseRappicardStatement(data: Uint8Array): Promise<ParsedS
       // a transfer transaction from whichever account paid the bill, so
       // importing it again here would double-count it.
       if (cells[0] === "-") continue;
+
+      if (cells.length < 8) {
+        unrecognized.push(cells.join(" "));
+        continue;
+      }
 
       let description: string;
       let valorStr: string;
@@ -191,7 +228,10 @@ export async function parseRappicardStatement(data: Uint8Array): Promise<ParsedS
       if (!RAPPICARD_FIRST_CUOTA_RE.test(cuotasStr)) continue;
 
       const valor = parseLatinAmount(valorStr);
-      if (valor === null) continue;
+      if (valor === null) {
+        unrecognized.push(cells.join(" "));
+        continue;
+      }
 
       const [year, month, day] = cells[1].split("-").map(Number);
       rows.push({
@@ -202,7 +242,7 @@ export async function parseRappicardStatement(data: Uint8Array): Promise<ParsedS
     }
   }
 
-  return rows;
+  return { rows, unrecognized };
 }
 
 const NU_ANCHOR_DATE_RE = /^(\d{1,2})\s+([A-ZÁÉÍÓÚ]{3})(?:\s+(\d{4}))?$/i;
@@ -211,6 +251,10 @@ const NU_CORTE_RE =
   /^\d{1,2}\s+[A-ZÁÉÍÓÚ]{3}\s+\d{4}\|(\d{1,2})\s+([A-ZÁÉÍÓÚ]{3})\s+(\d{4})\|/i;
 const NU_YEAR_CONTINUATION_RE = /^\d{4}$/;
 const NU_REFUND_RE = /^devoluci/i;
+// Not anchored on the full "...pago" — that word sometimes wraps onto its
+// own continuation line (like long descriptions do), leaving cells[1] as
+// just "Gracias por tu" for this row.
+const NU_PAYMENT_RE = /^gracias por tu/i;
 
 const NU_MONTH_ABBR: Record<string, number> = {
   ENE: 1,
@@ -240,11 +284,14 @@ const NU_MONTH_ABBR: Record<string, number> = {
  *
  * Row detection is token-based rather than positional: a row only counts as
  * a purchase if one of its cells matches "N de M" (Cuotas). Rows without a
- * Cuotas column are one of two things, distinguished by description text:
- * a payment confirmation ("Gracias por tu pago" — already captured as a
- * transfer from whichever account paid the bill, so skipped here) or a
+ * Cuotas column are one of two known things, distinguished by description
+ * text: a payment confirmation ("Gracias por tu pago" — already captured as
+ * a transfer from whichever account paid the bill, so skipped here) or a
  * merchant refund ("Devolución - ..." — genuinely new information, recorded
- * as income since nothing else in the app would otherwise account for it).
+ * as income since nothing else in the app would otherwise account for it). A
+ * row-anchored line matching neither shape is reported via `unrecognized`
+ * instead of silently dropped, since that's exactly how the refund case
+ * itself was originally missed.
  *
  * Long descriptions — and, less predictably, the date's year — can wrap onto
  * their own line below the row (occasionally two unrelated rows' wrapped
@@ -254,9 +301,10 @@ const NU_MONTH_ABBR: Record<string, number> = {
  * on when unambiguous: a lone text line, or one paired with a bare 4-digit
  * year (which marks it as a wrap artifact rather than a new row).
  */
-export async function parseNuStatement(data: Uint8Array): Promise<ParsedStatementRow[]> {
+export async function parseNuStatement(data: Uint8Array): Promise<ParseResult> {
   const doc = await getDocument({ data }).promise;
   const rows: ParsedStatementRow[] = [];
+  const unrecognized: string[] = [];
   let corteMonth: number | null = null;
   let corteYear: number | null = null;
 
@@ -292,6 +340,12 @@ export async function parseNuStatement(data: Uint8Array): Promise<ParsedStatemen
       if (cells.length < 3) continue;
       const dateMatch = cells[0].match(NU_ANCHOR_DATE_RE);
       if (!dateMatch) continue;
+      // A summary/header line (e.g. "Fecha de pago"/"Fecha de corte"/period
+      // labels sharing a Y position) can coincidentally start with a
+      // date-shaped token too — but a real transaction row never has a
+      // *second* date-shaped cell right after it, since that slot is always
+      // the description. Two in a row means this isn't a transaction at all.
+      if (NU_ANCHOR_DATE_RE.test(cells[1])) continue;
 
       const cuotasIdx = cells.findIndex((c) => NU_CUOTAS_RE.test(c));
 
@@ -300,17 +354,31 @@ export async function parseNuStatement(data: Uint8Array): Promise<ParsedStatemen
         const cuotasMatch = cells[cuotasIdx].match(NU_CUOTAS_RE)!;
         if (cuotasMatch[1] !== "1") continue; // only the first installment counts
         const valor = parseLatinAmount(cells[cuotasIdx - 1]);
-        if (valor === null || valor === 0) continue;
+        if (valor === null) {
+          unrecognized.push(cells.join(" "));
+          continue;
+        }
+        if (valor === 0) continue;
         amountMinor = -valor;
       } else if (NU_REFUND_RE.test(cells[1] ?? "")) {
         // Refund rows have the same reduced shape as a payment row (no
         // Cuotas/Valor-del-mes/Interés columns) — Valor sits right after the
         // description instead of before Cuotas.
         const valor = parseLatinAmount(cells[2] ?? "");
-        if (valor === null || valor === 0) continue;
+        if (valor === null) {
+          unrecognized.push(cells.join(" "));
+          continue;
+        }
+        if (valor === 0) continue;
         amountMinor = valor;
+      } else if (NU_PAYMENT_RE.test(cells[1] ?? "")) {
+        continue; // payment confirmation, already captured as a transfer
       } else {
-        continue; // payment confirmation or some other non-purchase row
+        // Row-anchored (starts with a date) but doesn't match any known
+        // shape — flag it rather than silently dropping it, since this is
+        // exactly how the refund row type went unnoticed before.
+        unrecognized.push(cells.join(" "));
+        continue;
       }
 
       let description = cells[1] ?? "";
@@ -348,5 +416,5 @@ export async function parseNuStatement(data: Uint8Array): Promise<ParsedStatemen
     }
   }
 
-  return rows;
+  return { rows, unrecognized };
 }

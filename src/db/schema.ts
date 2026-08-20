@@ -73,6 +73,31 @@ export const transactions = sqliteTable("transactions", {
   deletedAt: integer("deleted_at", { mode: "timestamp" }),
 });
 
+// --- transaction splits -----------------------------------------------------------
+// Optional breakdown of one expense transaction into specific sub-expenses —
+// built for cash withdrawals ("retiro" imports/records as one lump expense so
+// the account balance stays accurate) where you later remember what part of
+// that cash actually went to. A split's amountMinor is informational only:
+// it never touches account balances (only the parent transaction's amount
+// does, since that's the real money movement) — it exists purely to let
+// stats/budget totals attribute part of the parent's spend to a more
+// specific category than the parent itself carries. Splits don't have to sum
+// to the parent's amount; whatever isn't split still counts under the
+// parent's own category.
+export const transactionSplits = sqliteTable("transaction_splits", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  transactionId: integer("transaction_id")
+    .notNull()
+    .references(() => transactions.id, { onDelete: "cascade" }),
+  amountMinor: real("amount_minor").notNull(),
+  categoryId: text("category_id").references(() => categories.id),
+  payeeId: text("payee_id").references(() => payees.id),
+  description: text("description"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
 // --- rules -----------------------------------------------------------
 // Auto-categorization: conditions combine via matchType ("all" = AND, "any"
 // = OR); a matching rule's actions are applied to the transaction. Rules run

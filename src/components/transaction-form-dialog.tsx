@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
+import { PlusIcon, XIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -24,18 +25,13 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Combobox } from "@/components/ui/combobox";
 import { CategorySelect } from "@/components/category-select";
 
-import { createTransaction, updateTransaction } from "@/app/transacciones/actions";
+import { createTransaction, updateTransaction, type SplitInput } from "@/app/transacciones/actions";
 import { CURRENCIES, TRANSACTION_TYPES } from "@/lib/enums";
 import { toDateTimeInputValue } from "@/lib/date-input";
+import { formatMoney } from "@/lib/format";
 
 const schema = z.object({
   date: z.string().min(1, "Requerido"),
@@ -76,21 +72,53 @@ type Transaction = {
   notes: string | null;
 };
 
+type ExistingSplit = {
+  id: number;
+  amountMinor: number;
+  categoryId: string | null;
+  payeeId: string | null;
+  description: string | null;
+};
+
+// Form-local shape for a split row being edited — string amount (like the
+// parent's own amountMinor field) and "none" sentinels, converted to
+// `SplitInput` only at submit time.
+type SplitRow = {
+  key: string;
+  amountMinor: string;
+  categoryId: string;
+  payeeId: string;
+  description: string;
+};
+
+function splitRowsFromExisting(splits: ExistingSplit[]): SplitRow[] {
+  return splits.map((s) => ({
+    key: `existing-${s.id}`,
+    amountMinor: String(s.amountMinor),
+    categoryId: s.categoryId ?? "none",
+    payeeId: s.payeeId ?? "none",
+    description: s.description ?? "",
+  }));
+}
+
 export function TransactionFormDialog({
   accounts,
   categories,
   payees,
   transaction,
+  splits = [],
   trigger,
 }: {
   accounts: Account[];
   categories: Category[];
   payees: Payee[];
   transaction?: Transaction;
+  splits?: ExistingSplit[];
   trigger: React.ReactElement;
 }) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const [splitRows, setSplitRows] = useState<SplitRow[]>(() => splitRowsFromExisting(splits));
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -114,13 +142,40 @@ export function TransactionFormDialog({
 
   const type = form.watch("type");
   const accountId = form.watch("accountId");
+  const amountMinorStr = form.watch("amountMinor");
+  const currency = form.watch("currency");
   const isTransfer = type === "transfer";
+  const showSplits = !isTransfer && type === "expense";
+
+  const splitTotal = splitRows.reduce((s, r) => s + (Number(r.amountMinor) || 0), 0);
+  const remainder = (Number(amountMinorStr) || 0) - splitTotal;
 
   function onAccountChange(id: string | null, onChange: (v: string) => void) {
     if (!id) return;
     onChange(id);
     const account = accounts.find((a) => a.id === id);
     if (account) form.setValue("currency", account.currency as FormValues["currency"]);
+  }
+
+  function addSplitRow() {
+    setSplitRows((prev) => [
+      ...prev,
+      {
+        key: `new-${Date.now()}-${prev.length}`,
+        amountMinor: remainder > 0 ? String(remainder) : "",
+        categoryId: "none",
+        payeeId: "none",
+        description: "",
+      },
+    ]);
+  }
+
+  function updateSplitRow(key: string, patch: Partial<SplitRow>) {
+    setSplitRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  }
+
+  function removeSplitRow(key: string) {
+    setSplitRows((prev) => prev.filter((r) => r.key !== key));
   }
 
   function onSubmit(values: FormValues) {
@@ -150,13 +205,27 @@ export function TransactionFormDialog({
           projectTrip: values.projectTrip || null,
           notes: values.notes || null,
         };
+        // Only expense transactions can carry a breakdown — if the type got
+        // switched away from expense, whatever's in splitRows is discarded
+        // rather than persisted.
+        const splitsInput: SplitInput[] = values.type === "expense"
+          ? splitRows
+              .filter((r) => Number(r.amountMinor) > 0)
+              .map((r) => ({
+                amountMinor: Number(r.amountMinor),
+                categoryId: r.categoryId !== "none" ? r.categoryId : null,
+                payeeId: r.payeeId !== "none" ? r.payeeId : null,
+                description: r.description || null,
+              }))
+          : [];
         if (transaction) {
-          await updateTransaction(transaction.id, input);
+          await updateTransaction(transaction.id, input, splitsInput);
           toast.success("Transacción actualizada");
         } else {
-          await createTransaction(input);
+          await createTransaction(input, splitsInput);
           toast.success("Transacción creada");
           form.reset();
+          setSplitRows([]);
         }
         setOpen(false);
       } catch (err) {
@@ -181,24 +250,14 @@ export function TransactionFormDialog({
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Tipo</FormLabel>
-                    <Select
-                      value={field.value}
-                      onValueChange={field.onChange}
-                      items={Object.fromEntries(TRANSACTION_TYPES.map((t) => [t, t]))}
-                    >
-                      <FormControl>
-                        <SelectTrigger className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {TRANSACTION_TYPES.map((t) => (
-                          <SelectItem key={t} value={t}>
-                            {t}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <FormControl>
+                      <Combobox
+                        value={field.value}
+                        onValueChange={field.onChange}
+                        items={Object.fromEntries(TRANSACTION_TYPES.map((t) => [t, t]))}
+                        className="w-full"
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -225,24 +284,14 @@ export function TransactionFormDialog({
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Cuenta</FormLabel>
-                    <Select
-                      value={field.value}
-                      onValueChange={(v) => onAccountChange(v, field.onChange)}
-                      items={Object.fromEntries(accounts.map((a) => [a.id, a.name]))}
-                    >
-                      <FormControl>
-                        <SelectTrigger className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {accounts.map((a) => (
-                          <SelectItem key={a.id} value={a.id}>
-                            {a.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <FormControl>
+                      <Combobox
+                        value={field.value}
+                        onValueChange={(v) => onAccountChange(v, field.onChange)}
+                        items={Object.fromEntries(accounts.map((a) => [a.id, a.name]))}
+                        className="w-full"
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -254,32 +303,19 @@ export function TransactionFormDialog({
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Cuenta destino</FormLabel>
-                      <Select
-                        value={field.value}
-                        onValueChange={field.onChange}
-                        items={{
-                          none: "Sin especificar",
-                          ...Object.fromEntries(
-                            accounts.filter((a) => a.id !== accountId).map((a) => [a.id, a.name])
-                          ),
-                        }}
-                      >
-                        <FormControl>
-                          <SelectTrigger className="w-full">
-                            <SelectValue />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="none">Sin especificar</SelectItem>
-                          {accounts
-                            .filter((a) => a.id !== accountId)
-                            .map((a) => (
-                              <SelectItem key={a.id} value={a.id}>
-                                {a.name}
-                              </SelectItem>
-                            ))}
-                        </SelectContent>
-                      </Select>
+                      <FormControl>
+                        <Combobox
+                          value={field.value}
+                          onValueChange={field.onChange}
+                          items={{
+                            none: "Sin especificar",
+                            ...Object.fromEntries(
+                              accounts.filter((a) => a.id !== accountId).map((a) => [a.id, a.name])
+                            ),
+                          }}
+                          className="w-full"
+                        />
+                      </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -326,24 +362,14 @@ export function TransactionFormDialog({
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Moneda</FormLabel>
-                    <Select
-                      value={field.value}
-                      onValueChange={field.onChange}
-                      items={Object.fromEntries(CURRENCIES.map((c) => [c, c]))}
-                    >
-                      <FormControl>
-                        <SelectTrigger className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {CURRENCIES.map((c) => (
-                          <SelectItem key={c} value={c}>
-                            {c}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <FormControl>
+                      <Combobox
+                        value={field.value}
+                        onValueChange={field.onChange}
+                        items={Object.fromEntries(CURRENCIES.map((c) => [c, c]))}
+                        className="w-full"
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -371,28 +397,18 @@ export function TransactionFormDialog({
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Moneda destino</FormLabel>
-                      <Select
-                        value={field.value}
-                        onValueChange={field.onChange}
-                        items={{
-                          none: "Igual a origen",
-                          ...Object.fromEntries(CURRENCIES.map((c) => [c, c])),
-                        }}
-                      >
-                        <FormControl>
-                          <SelectTrigger className="w-full">
-                            <SelectValue placeholder="Igual a origen" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="none">Igual a origen</SelectItem>
-                          {CURRENCIES.map((c) => (
-                            <SelectItem key={c} value={c}>
-                              {c}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <FormControl>
+                        <Combobox
+                          value={field.value}
+                          onValueChange={field.onChange}
+                          items={{
+                            none: "Igual a origen",
+                            ...Object.fromEntries(CURRENCIES.map((c) => [c, c])),
+                          }}
+                          placeholder="Igual a origen"
+                          className="w-full"
+                        />
+                      </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -407,28 +423,18 @@ export function TransactionFormDialog({
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Payee</FormLabel>
-                    <Select
-                      value={field.value}
-                      onValueChange={field.onChange}
-                      items={{
-                        none: "Sin payee",
-                        ...Object.fromEntries(payees.map((p) => [p.id, p.name])),
-                      }}
-                    >
-                      <FormControl>
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Sin payee" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="none">Sin payee</SelectItem>
-                        {payees.map((p) => (
-                          <SelectItem key={p.id} value={p.id}>
-                            {p.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <FormControl>
+                      <Combobox
+                        value={field.value}
+                        onValueChange={field.onChange}
+                        items={{
+                          none: "Sin payee",
+                          ...Object.fromEntries(payees.map((p) => [p.id, p.name])),
+                        }}
+                        placeholder="Sin payee"
+                        className="w-full"
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -448,6 +454,82 @@ export function TransactionFormDialog({
                 </FormItem>
               )}
             />
+
+            {showSplits && (
+              <div className="flex flex-col gap-2 rounded-lg border p-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Desglose (opcional)</span>
+                  <Button type="button" variant="outline" size="sm" onClick={addSplitRow}>
+                    <PlusIcon /> Agregar
+                  </Button>
+                </div>
+                {splitRows.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    Registra aquí gastos específicos dentro de este monto — por ejemplo, qué compraste con
+                    parte de un retiro de efectivo.
+                  </p>
+                ) : (
+                  <>
+                    <div className="flex flex-col gap-2">
+                      {splitRows.map((r) => (
+                        <div key={r.key} className="flex flex-col gap-1.5 rounded-md bg-muted/40 p-2">
+                          <div className="flex gap-1.5">
+                            <Input
+                              type="number"
+                              step="any"
+                              placeholder="Monto"
+                              className="h-7 w-24 text-sm"
+                              value={r.amountMinor}
+                              onChange={(e) => updateSplitRow(r.key, { amountMinor: e.target.value })}
+                            />
+                            <Input
+                              placeholder="Descripción"
+                              className="h-7 flex-1 text-sm"
+                              value={r.description}
+                              onChange={(e) => updateSplitRow(r.key, { description: e.target.value })}
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              onClick={() => removeSplitRow(r.key)}
+                            >
+                              <XIcon className="size-4" />
+                              <span className="sr-only">Quitar</span>
+                            </Button>
+                          </div>
+                          <div className="flex gap-1.5">
+                            <CategorySelect
+                              categories={categories}
+                              value={r.categoryId}
+                              onValueChange={(v) => updateSplitRow(r.key, { categoryId: v })}
+                              kind="expense"
+                              className="h-7 flex-1 text-sm"
+                            />
+                            <Combobox
+                              value={r.payeeId}
+                              onValueChange={(v) => updateSplitRow(r.key, { payeeId: v || "none" })}
+                              items={{
+                                none: "Sin payee",
+                                ...Object.fromEntries(payees.map((p) => [p.id, p.name])),
+                              }}
+                              placeholder="Sin payee"
+                              className="h-7 flex-1 text-sm"
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Desglosado: {formatMoney(splitTotal, currency)} de{" "}
+                      {formatMoney(Number(amountMinorStr) || 0, currency)}
+                      {remainder !== 0 && ` · Sin desglosar: ${formatMoney(remainder, currency)}`}
+                    </p>
+                  </>
+                )}
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-3">
               <FormField
                 control={form.control}

@@ -18,13 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Combobox } from "@/components/ui/combobox";
 import { CategorySelect } from "@/components/category-select";
 
 import { createRule, previewRuleMatches, updateRule, type RulePreviewSample } from "@/app/reglas/actions";
@@ -207,19 +201,12 @@ export function RuleFormDialog({
                   control={form.control}
                   name="matchType"
                   render={({ field }) => (
-                    <Select
+                    <Combobox
                       value={field.value}
                       onValueChange={field.onChange}
                       items={{ all: "todas", any: "alguna" }}
-                    >
-                      <SelectTrigger className="h-6 w-24 text-xs">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">todas</SelectItem>
-                        <SelectItem value="any">alguna</SelectItem>
-                      </SelectContent>
-                    </Select>
+                      className="h-6 w-24 text-xs"
+                    />
                   )}
                 />
                 <span>de estas condiciones</span>
@@ -330,7 +317,7 @@ function ConditionRow({
         control={form.control}
         name={`conditions.${index}.field`}
         render={({ field }) => (
-          <Select
+          <Combobox
             value={field.value}
             onValueChange={(v) => {
               if (!v) return;
@@ -345,40 +332,20 @@ function ConditionRow({
               }
             }}
             items={Object.fromEntries(RULE_FIELDS.map((f) => [f, FIELD_LABELS[f]]))}
-          >
-            <SelectTrigger className="w-28 shrink-0">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {RULE_FIELDS.map((f) => (
-                <SelectItem key={f} value={f}>
-                  {FIELD_LABELS[f]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            className="w-28 shrink-0"
+          />
         )}
       />
       <FormField
         control={form.control}
         name={`conditions.${index}.op`}
         render={({ field }) => (
-          <Select
+          <Combobox
             value={field.value}
             onValueChange={field.onChange}
             items={Object.fromEntries(availableOps.map((op) => [op, OP_LABELS[op]]))}
-          >
-            <SelectTrigger className="w-36 shrink-0">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {availableOps.map((op) => (
-                <SelectItem key={op} value={op}>
-                  {OP_LABELS[op]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            className="w-36 shrink-0"
+          />
         )}
       />
       <FormField
@@ -388,39 +355,21 @@ function ConditionRow({
           <FormItem className="min-w-0 flex-1">
             <FormControl>
               {fieldType === "accountId" ? (
-                <Select
+                <Combobox
                   value={field.value}
                   onValueChange={field.onChange}
                   items={Object.fromEntries(accounts.map((a) => [a.id, a.name]))}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Cuenta" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {accounts.map((a) => (
-                      <SelectItem key={a.id} value={a.id}>
-                        {a.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  placeholder="Cuenta"
+                  className="w-full"
+                />
               ) : fieldType === "payeeId" ? (
-                <Select
+                <Combobox
                   value={field.value}
                   onValueChange={field.onChange}
                   items={Object.fromEntries(payees.map((p) => [p.id, p.name]))}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Payee" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {payees.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        {p.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  placeholder="Payee"
+                  className="w-full"
+                />
               ) : (
                 <Input
                   type={fieldType === "amountMinor" ? "number" : "text"}
@@ -463,19 +412,12 @@ function ActionRow({
         control={form.control}
         name={`actions.${index}.field`}
         render={({ field }) => (
-          <Select
+          <Combobox
             value={field.value}
             onValueChange={field.onChange}
             items={{ categoryId: "Categoría", payeeId: "Payee" }}
-          >
-            <SelectTrigger className="w-32 shrink-0">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="categoryId">Categoría</SelectItem>
-              <SelectItem value="payeeId">Payee</SelectItem>
-            </SelectContent>
-          </Select>
+            className="w-32 shrink-0"
+          />
         )}
       />
       <FormField
@@ -494,22 +436,12 @@ function ActionRow({
                   className="w-full"
                 />
               ) : (
-                <Select
+                <Combobox
                   value={field.value}
                   onValueChange={field.onChange}
                   items={Object.fromEntries(payees.map((p) => [p.id, p.name]))}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Selecciona..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {payees.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        {p.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  className="w-full"
+                />
               )}
             </FormControl>
             <FormMessage />

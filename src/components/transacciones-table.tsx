@@ -3,17 +3,11 @@
 import * as React from "react";
 import Link from "next/link";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ArrowRightIcon, PencilIcon } from "lucide-react";
+import { ArrowRightIcon, PencilIcon, SplitIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Combobox } from "@/components/ui/combobox";
 import { DataTable } from "@/components/data-table/data-table";
 import { DataTableColumnHeader } from "@/components/data-table/column-header";
 import { DataTableSearchInput } from "@/components/data-table/search-input";
@@ -23,14 +17,14 @@ import { TransactionFormDialog } from "@/components/transaction-form-dialog";
 import { BulkEditTransactionsDialog } from "@/components/bulk-edit-transactions-dialog";
 import { DeleteButton } from "@/components/delete-button";
 import { formatDate, formatMoney } from "@/lib/format";
-import { TRANSACTION_TYPES } from "@/lib/enums";
 import { bulkSoftDeleteTransactions, softDeleteTransaction } from "@/app/transacciones/actions";
-import type { transactions } from "@/db/schema";
+import type { transactions, transactionSplits } from "@/db/schema";
 
 type Account = { id: string; name: string; currency: string };
 type Category = { id: string; name: string; kind: string; parentCategoryId: string | null };
 type Payee = { id: string; name: string };
 type Transaction = typeof transactions.$inferSelect;
+type TransactionSplit = typeof transactionSplits.$inferSelect;
 
 type Row = {
   raw: Transaction;
@@ -46,6 +40,7 @@ type Row = {
   destinationAccountId: string | null;
   amountMinor: number;
   currency: string;
+  hasSplits: boolean;
 };
 
 const TYPE_LABELS: Record<string, string> = {
@@ -59,11 +54,15 @@ export function TransaccionesTable({
   accounts,
   categories,
   payees,
+  initialSearch,
+  splitsByTx,
 }: {
   transactions: Transaction[];
   accounts: Account[];
   categories: Category[];
   payees: Payee[];
+  initialSearch?: string;
+  splitsByTx?: Map<number, TransactionSplit[]>;
 }) {
   const accountName = React.useMemo(() => new Map(accounts.map((a) => [a.id, a.name])), [accounts]);
   const categoryName = React.useMemo(() => new Map(categories.map((c) => [c.id, c.name])), [categories]);
@@ -90,12 +89,13 @@ export function TransaccionesTable({
           destinationAccountId: tx.destinationAccountId,
           amountMinor: tx.amountMinor,
           currency: tx.currency,
+          hasSplits: (splitsByTx?.get(tx.id)?.length ?? 0) > 0,
         };
       }),
-    [transactions, accountName, categoryName, categoryKind, payeeName]
+    [transactions, accountName, categoryName, categoryKind, payeeName, splitsByTx]
   );
 
-  const [search, setSearch] = React.useState("");
+  const [search, setSearch] = React.useState(initialSearch ?? "");
   const [typeFilter, setTypeFilter] = React.useState("all");
   const [accountFilter, setAccountFilter] = React.useState("all");
 
@@ -126,7 +126,12 @@ export function TransaccionesTable({
         header: ({ column }) => <DataTableColumnHeader column={column} title="Payee / Descripción" />,
         cell: ({ row }) => (
           <div className="max-w-[280px]">
-            <div className="truncate font-medium">{row.original.primaryLabel}</div>
+            <div className="flex items-center gap-1.5 truncate font-medium">
+              {row.original.primaryLabel}
+              {row.original.hasSplits && (
+                <SplitIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label="Desglosado" />
+              )}
+            </div>
             {/* Always render this line, even when blank, so every row reserves the
                 same height regardless of whether it has a secondary description. */}
             <div className="truncate text-xs text-muted-foreground">
@@ -197,6 +202,7 @@ export function TransaccionesTable({
               categories={categories}
               payees={payees}
               transaction={row.original.raw}
+              splits={splitsByTx?.get(row.original.raw.id) ?? []}
               trigger={
                 <Button variant="ghost" size="icon-sm">
                   <PencilIcon />
@@ -213,7 +219,7 @@ export function TransaccionesTable({
         ),
       },
     ],
-    [accounts, categories, payees, accountName]
+    [accounts, categories, payees, accountName, splitsByTx]
   );
 
   return (
@@ -252,36 +258,18 @@ export function TransaccionesTable({
       toolbar={() => (
         <div className="flex flex-wrap items-center gap-2">
           <DataTableSearchInput value={search} onChange={setSearch} placeholder="Buscar payee, categoría..." />
-          <Select value={typeFilter} onValueChange={(v) => v && setTypeFilter(v)} items={{ all: "Todos los tipos", ...TYPE_LABELS }}>
-            <SelectTrigger className="w-[160px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos los tipos</SelectItem>
-              {TRANSACTION_TYPES.map((t) => (
-                <SelectItem key={t} value={t}>
-                  {TYPE_LABELS[t]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
+          <Combobox
+            value={typeFilter}
+            onValueChange={(v) => setTypeFilter(v || "all")}
+            items={{ all: "Todos los tipos", ...TYPE_LABELS }}
+            className="w-[160px]"
+          />
+          <Combobox
             value={accountFilter}
-            onValueChange={(v) => v && setAccountFilter(v)}
+            onValueChange={(v) => setAccountFilter(v || "all")}
             items={{ all: "Todas las cuentas", ...Object.fromEntries(accounts.map((a) => [a.id, a.name])) }}
-          >
-            <SelectTrigger className="w-[180px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todas las cuentas</SelectItem>
-              {accounts.map((a) => (
-                <SelectItem key={a.id} value={a.id}>
-                  {a.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            className="w-[180px]"
+          />
         </div>
       )}
     />

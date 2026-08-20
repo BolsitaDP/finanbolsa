@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import { BulkEditDialog } from "@/components/data-table/bulk-edit-dialog";
-import { BulkEditCategoryField, BulkEditSelectField } from "@/components/data-table/bulk-edit-field";
+import { BulkEditCategoryField, BulkEditSelectField, BulkEditTextField } from "@/components/data-table/bulk-edit-field";
 import { TRANSACTION_TYPES, type TransactionType } from "@/lib/enums";
 
 type Account = { id: string; name: string };
@@ -24,6 +24,7 @@ export type ImportGroupPatch = Partial<{
   categoryChoice: string;
   payeeChoice: string;
   destinationChoice: string;
+  projectTrip: string;
   createRule: boolean;
   skip: boolean;
 }>;
@@ -53,6 +54,8 @@ export function ImportBulkEditDialog({
   const [payeeId, setPayeeId] = useState("");
   const [destinationEnabled, setDestinationEnabled] = useState(false);
   const [destinationAccountId, setDestinationAccountId] = useState("");
+  const [projectEnabled, setProjectEnabled] = useState(false);
+  const [projectTrip, setProjectTrip] = useState("");
   const [createRuleEnabled, setCreateRuleEnabled] = useState(false);
   const [createRuleValue, setCreateRuleValue] = useState("");
   const [skipEnabled, setSkipEnabled] = useState(false);
@@ -64,6 +67,7 @@ export function ImportBulkEditDialog({
     if (categoryEnabled) patch.categoryChoice = categoryId;
     if (payeeEnabled) patch.payeeChoice = payeeId;
     if (destinationEnabled) patch.destinationChoice = destinationAccountId;
+    if (projectEnabled) patch.projectTrip = projectTrip;
     if (createRuleEnabled && createRuleValue) patch.createRule = createRuleValue === "true";
     if (skipEnabled && skipValue) patch.skip = skipValue === "true";
     onApply(patch);
@@ -108,6 +112,14 @@ export function ImportBulkEditDialog({
           ...Object.fromEntries(accounts.filter((a) => a.id !== accountId).map((a) => [a.id, a.name])),
         }}
         placeholder="Selecciona..."
+      />
+      <BulkEditTextField
+        label="Proyecto / Viaje"
+        enabled={projectEnabled}
+        onEnabledChange={setProjectEnabled}
+        value={projectTrip}
+        onValueChange={setProjectTrip}
+        placeholder="Ej. Europa"
       />
       <BulkEditSelectField
         label="Crear regla"

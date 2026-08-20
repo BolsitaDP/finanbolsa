@@ -33,14 +33,18 @@ export async function parseStatement(accountId: string, formData: FormData) {
   // Uint8Array view over the same ArrayBuffer): pdfjs transfers the buffer
   // to its worker internally, which detaches it, so a shared buffer breaks
   // the second parse.
-  const bancolombiaRows = await parseBancolombiaStatement(fileBytes.slice());
-  const rappicardRows = bancolombiaRows.length > 0 ? [] : await parseRappicardStatement(fileBytes.slice());
-  const rows =
-    bancolombiaRows.length > 0
-      ? bancolombiaRows
-      : rappicardRows.length > 0
-        ? rappicardRows
-        : await parseNuStatement(fileBytes.slice());
+  const bancolombia = await parseBancolombiaStatement(fileBytes.slice());
+  const rappicard =
+    bancolombia.rows.length > 0 ? { rows: [], unrecognized: [] } : await parseRappicardStatement(fileBytes.slice());
+  const nu =
+    bancolombia.rows.length > 0 || rappicard.rows.length > 0
+      ? { rows: [], unrecognized: [] }
+      : await parseNuStatement(fileBytes.slice());
+  // Only the parser that actually matched this statement's format has
+  // meaningful `unrecognized` lines — the other two see the whole document as
+  // one big pile of non-matching text, which isn't useful to report.
+  const { rows, unrecognized } =
+    bancolombia.rows.length > 0 ? bancolombia : rappicard.rows.length > 0 ? rappicard : nu;
   if (rows.length === 0) {
     throw new Error(
       "No se encontraron movimientos en el PDF. Formatos soportados: extracto de Bancolombia, RappiCard o Nu."
@@ -144,7 +148,7 @@ export async function parseStatement(accountId: string, formData: FormData) {
     })
     .sort((a, b) => b.count - a.count);
 
-  return { groups, totalTransactions: rows.length };
+  return { groups, totalTransactions: rows.length, unrecognized };
 }
 
 export async function bulkImportTransactions(
@@ -262,6 +266,7 @@ export async function bulkImportTransactions(
         categoryId: group.categoryId,
         payeeId,
         description: tx.description,
+        projectTrip: group.projectTrip,
         notes: "Importado de extracto",
       });
       imported++;

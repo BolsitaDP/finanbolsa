@@ -24,11 +24,13 @@ type Account = typeof accounts.$inferSelect;
 export function CuentasTable({
   accounts,
   balances,
+  initialSearch,
 }: {
   accounts: Account[];
   balances: Record<string, number>;
+  initialSearch?: string;
 }) {
-  const [search, setSearch] = React.useState("");
+  const [search, setSearch] = React.useState(initialSearch ?? "");
 
   const filtered = React.useMemo(() => {
     if (!search) return accounts;

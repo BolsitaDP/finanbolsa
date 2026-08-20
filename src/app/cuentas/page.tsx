@@ -9,7 +9,12 @@ import { AccountFormDialog } from "@/components/account-form-dialog";
 import { CuentasTable } from "@/components/cuentas-table";
 import { currentBalances } from "@/lib/balance";
 
-export default async function CuentasPage() {
+export default async function CuentasPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string }>;
+}) {
+  const { q } = await searchParams;
   const [allAccounts, allTransactions] = await Promise.all([
     db.select().from(accounts).orderBy(asc(accounts.name)),
     db.select().from(transactions).where(isNull(transactions.deletedAt)),
@@ -41,7 +46,7 @@ export default async function CuentasPage() {
           <CardTitle>{allAccounts.length} cuentas</CardTitle>
         </CardHeader>
         <CardContent>
-          <CuentasTable accounts={allAccounts} balances={balances} />
+          <CuentasTable accounts={allAccounts} balances={balances} initialSearch={q} />
         </CardContent>
       </Card>
     </div>

@@ -8,7 +8,12 @@ import { Button } from "@/components/ui/button";
 import { PayeeFormDialog } from "@/components/payee-form-dialog";
 import { PayeesTable } from "@/components/payees-table";
 
-export default async function PayeesPage() {
+export default async function PayeesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string }>;
+}) {
+  const { q } = await searchParams;
   const [allPayees, allCategories] = await Promise.all([
     db.select().from(payees).orderBy(asc(payees.name)),
     db.select().from(categories).orderBy(asc(categories.name)),
@@ -38,7 +43,7 @@ export default async function PayeesPage() {
           <CardTitle>{allPayees.length} payees</CardTitle>
         </CardHeader>
         <CardContent>
-          <PayeesTable payees={allPayees} categories={allCategories} />
+          <PayeesTable payees={allPayees} categories={allCategories} initialSearch={q} />
         </CardContent>
       </Card>
     </div>

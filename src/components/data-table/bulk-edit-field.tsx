@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Combobox } from "@/components/ui/combobox";
 import { Input } from "@/components/ui/input";
 import { CategorySelect } from "@/components/category-select";
 
@@ -51,18 +45,7 @@ export function BulkEditSelectField({
   return (
     <div className="flex flex-col gap-1.5">
       <FieldLabel label={label} enabled={enabled} onEnabledChange={onEnabledChange} />
-      <Select value={value} onValueChange={(v) => v && onValueChange(v)} items={items} disabled={!enabled}>
-        <SelectTrigger className="w-full">
-          <SelectValue placeholder={placeholder} />
-        </SelectTrigger>
-        <SelectContent>
-          {Object.entries(items).map(([key, itemLabel]) => (
-            <SelectItem key={key} value={key}>
-              {itemLabel}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <Combobox value={value} onValueChange={onValueChange} items={items} placeholder={placeholder} disabled={!enabled} className="w-full" />
     </div>
   );
 }

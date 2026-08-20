@@ -24,6 +24,7 @@ export type ImportGroupInput = {
   newPayeeName: string | null;
   categoryId: string | null;
   destinationAccountId: string | null;
+  projectTrip: string | null;
   skip: boolean;
   createRule: boolean;
   transactions: ParsedTransaction[];

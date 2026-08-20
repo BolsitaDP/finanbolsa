@@ -20,9 +20,17 @@ import type { categories, payees } from "@/db/schema";
 type Payee = typeof payees.$inferSelect;
 type Category = typeof categories.$inferSelect;
 
-export function PayeesTable({ payees, categories }: { payees: Payee[]; categories: Category[] }) {
+export function PayeesTable({
+  payees,
+  categories,
+  initialSearch,
+}: {
+  payees: Payee[];
+  categories: Category[];
+  initialSearch?: string;
+}) {
   const categoryName = React.useMemo(() => new Map(categories.map((c) => [c.id, c.name])), [categories]);
-  const [search, setSearch] = React.useState("");
+  const [search, setSearch] = React.useState(initialSearch ?? "");
 
   const filtered = React.useMemo(() => {
     if (!search) return payees;

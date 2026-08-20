@@ -2,7 +2,7 @@ import Link from "next/link";
 import { and, asc, eq, isNull } from "drizzle-orm";
 
 import { db } from "@/db";
-import { budgets, categories, settings, transactions } from "@/db/schema";
+import { budgets, categories, settings, transactions, transactionSplits } from "@/db/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/table";
 import { BudgetAmountInput } from "@/components/budget-amount-input";
 import { MonthSwitcher } from "@/components/month-switcher";
+import { categoryAllocations, groupSplitsByTransaction } from "@/lib/splits";
 import { monthKey, monthStart, shiftMonth } from "@/lib/month";
 import { formatMoney } from "@/lib/format";
 
@@ -30,7 +31,7 @@ export default async function PresupuestoPage({
   const [settingsRow] = await db.select().from(settings).where(eq(settings.id, "default"));
   const baseCurrency = settingsRow?.baseCurrency ?? "COP";
 
-  const [expenseCategories, allBudgets, allTx] = await Promise.all([
+  const [expenseCategories, allBudgets, allTx, allSplits] = await Promise.all([
     db
       .select()
       .from(categories)
@@ -41,7 +42,9 @@ export default async function PresupuestoPage({
       .select()
       .from(transactions)
       .where(and(eq(transactions.currency, baseCurrency), isNull(transactions.deletedAt))),
+    db.select().from(transactionSplits),
   ]);
+  const splitsByTx = groupSplitsByTransaction(allSplits);
 
   function computeForCategory(categoryId: string) {
     let budgetedThisMonth = 0;
@@ -54,9 +57,12 @@ export default async function PresupuestoPage({
     let spentThisMonth = 0;
     let spentBefore = 0;
     for (const t of allTx) {
-      if (t.categoryId !== categoryId || t.type !== "expense") continue;
-      if (t.date >= start && t.date < end) spentThisMonth += t.amountMinor;
-      else if (t.date < start) spentBefore += t.amountMinor;
+      if (t.type !== "expense") continue;
+      for (const alloc of categoryAllocations(t, splitsByTx)) {
+        if (alloc.categoryId !== categoryId) continue;
+        if (t.date >= start && t.date < end) spentThisMonth += alloc.amountMinor;
+        else if (t.date < start) spentBefore += alloc.amountMinor;
+      }
     }
     const rollover = budgetedBefore - spentBefore;
     return {

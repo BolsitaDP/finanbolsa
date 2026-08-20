@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
 import { AppSidebar } from "@/components/app-sidebar";
+import { GlobalSearch } from "@/components/global-search";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";
@@ -38,6 +39,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
                 <SidebarTrigger />
                 <Separator orientation="vertical" className="h-4" />
                 <span className="text-sm font-medium">FinanBolsa</span>
+                <div className="ml-auto">
+                  <GlobalSearch />
+                </div>
               </header>
               <main className="flex-1 p-6">{children}</main>
             </SidebarInset>

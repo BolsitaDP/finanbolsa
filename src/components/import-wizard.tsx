@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
-import { UploadIcon, ArrowLeftIcon, CheckIcon, PencilIcon } from "lucide-react";
+import { UploadIcon, ArrowLeftIcon, CheckIcon, PencilIcon, TriangleAlertIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,13 +16,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Combobox } from "@/components/ui/combobox";
 import { BulkActionsBar } from "@/components/data-table/bulk-actions-bar";
 import { ImportBulkEditDialog, type ImportGroupPatch } from "@/components/import-bulk-edit-dialog";
 import { CategorySelect } from "@/components/category-select";
@@ -48,6 +42,7 @@ type EditableGroup = ParsedGroup & {
   newPayeeName: string;
   categoryChoice: string; // "none" | category id
   destinationChoice: string; // "none" | account id
+  projectTrip: string;
   skip: boolean;
   createRule: boolean;
   // Frozen at parse time from whether a payee/rule already suggested a
@@ -73,6 +68,7 @@ export function ImportWizard({
   const [groups, setGroups] = useState<EditableGroup[]>([]);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [totalTransactions, setTotalTransactions] = useState(0);
+  const [unrecognized, setUnrecognized] = useState<string[]>([]);
   const [summary, setSummary] = useState<{
     imported: number;
     skippedDuplicates: number;
@@ -97,15 +93,17 @@ export function ImportWizard({
         fd.append("file", file);
         const result = await parseStatement(accountId, fd);
         setTotalTransactions(result.totalTransactions);
+        setUnrecognized(result.unrecognized);
         setSelectedKeys(new Set());
         setGroups(
           result.groups.map((g) => ({
             ...g,
             typeChoice: g.type,
-            payeeChoice: g.suggestedPayeeId ?? (g.type === "expense" ? "new" : "none"),
+            payeeChoice: g.suggestedPayeeId ?? "none",
             newPayeeName: g.suggestedPayeeId ? "" : g.merchantLabel,
             categoryChoice: g.suggestedCategoryId ?? "none",
             destinationChoice: "none",
+            projectTrip: "",
             skip: false,
             // Off by default: with hundreds of one-off "sueltas" transactions
             // per import, auto-creating a rule for every single one is what
@@ -162,6 +160,7 @@ export function ImportWizard({
           newPayeeName: g.payeeChoice === "new" ? g.newPayeeName || g.merchantLabel : null,
           categoryId: g.categoryChoice !== "none" ? g.categoryChoice : null,
           destinationAccountId: g.destinationChoice !== "none" ? g.destinationChoice : null,
+          projectTrip: g.projectTrip || null,
           skip: g.skip,
           createRule: g.createRule,
           transactions: g.transactions,
@@ -205,6 +204,7 @@ export function ImportWizard({
               setGroups([]);
               setSelectedKeys(new Set());
               setSummary(null);
+              setUnrecognized([]);
             }}
           >
             Importar otro extracto
@@ -231,6 +231,35 @@ export function ImportWizard({
             </Button>
           </div>
         </div>
+
+        {unrecognized.length > 0 && (
+          <Card className="border-amber-500/50 bg-amber-500/5">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base text-amber-700 dark:text-amber-400">
+                <TriangleAlertIcon className="size-4" />
+                {unrecognized.length} línea{unrecognized.length === 1 ? "" : "s"} del PDF no se reconocieron
+              </CardTitle>
+              <CardDescription>
+                Estas líneas parecen movimientos pero no coinciden con ningún formato conocido — puede haber un
+                tipo de movimiento nuevo (como una devolución) que el importador no sabe interpretar todavía.
+                No están incluidas en las {totalTransactions} transacciones de abajo; revísalas manualmente en
+                el PDF.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ul className="flex flex-col gap-1 font-mono text-xs text-muted-foreground">
+                {unrecognized.slice(0, 8).map((line, i) => (
+                  <li key={i} className="truncate">
+                    {line}
+                  </li>
+                ))}
+              </ul>
+              {unrecognized.length > 8 && (
+                <p className="mt-1 text-xs text-muted-foreground">y {unrecognized.length - 8} más...</p>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {selectedKeys.size > 0 && (
           <BulkActionsBar count={selectedKeys.size} onClear={() => setSelectedKeys(new Set())}>
@@ -289,22 +318,12 @@ export function ImportWizard({
       <CardContent className="flex flex-col gap-4">
         <div className="flex flex-col gap-1.5">
           <label className="text-sm font-medium">Cuenta</label>
-          <Select
+          <Combobox
             value={accountId}
             onValueChange={(v) => v && setAccountId(v)}
             items={Object.fromEntries(accounts.map((a) => [a.id, `${a.name} (${a.currency})`]))}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {accounts.map((a) => (
-                <SelectItem key={a.id} value={a.id}>
-                  {a.name} ({a.currency})
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            className="w-full"
+          />
         </div>
         <div className="flex flex-col gap-1.5">
           <label className="text-sm font-medium">Extracto PDF (Bancolombia, RappiCard o Nu)</label>
@@ -379,6 +398,7 @@ function GroupsSection({
               <TableHead>Tipo</TableHead>
               <TableHead>Payee</TableHead>
               <TableHead>Categoría / Destino</TableHead>
+              <TableHead>Proyecto / Viaje</TableHead>
               <TableHead>Regla</TableHead>
               <TableHead>Omitir</TableHead>
             </TableRow>
@@ -450,29 +470,19 @@ function GroupRow({
         {formatMoney(g.totalAmountMinor, accounts.find((a) => a.id === accountId)?.currency ?? "COP")}
       </TableCell>
       <TableCell className="min-w-[130px]">
-        <Select
+        <Combobox
           value={g.typeChoice}
           onValueChange={(v) => v && updateGroup(g.key, { typeChoice: v as TransactionType })}
           items={Object.fromEntries(TRANSACTION_TYPES.map((t) => [t, TYPE_LABELS[t]]))}
-        >
-          <SelectTrigger className="h-7 w-full text-sm">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {TRANSACTION_TYPES.map((t) => (
-              <SelectItem key={t} value={t}>
-                {TYPE_LABELS[t]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          className="h-7 w-full text-sm"
+        />
       </TableCell>
       <TableCell className="min-w-[160px]">
         {g.typeChoice === "transfer" ? (
           <span className="text-sm text-muted-foreground">—</span>
         ) : (
           <div className="flex flex-col gap-1">
-            <Select
+            <Combobox
               value={g.payeeChoice}
               onValueChange={(v) => v && updateGroup(g.key, { payeeChoice: v })}
               items={{
@@ -480,20 +490,8 @@ function GroupRow({
                 new: "+ Crear nuevo",
                 ...Object.fromEntries(payees.map((p) => [p.id, p.name])),
               }}
-            >
-              <SelectTrigger className="h-7 w-full text-sm">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">Sin payee</SelectItem>
-                <SelectItem value="new">+ Crear nuevo</SelectItem>
-                {payees.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              className="h-7 w-full text-sm"
+            />
             {g.payeeChoice === "new" && (
               <Input
                 className="h-7 text-sm"
@@ -507,28 +505,16 @@ function GroupRow({
       </TableCell>
       <TableCell className="min-w-[160px]">
         {g.typeChoice === "transfer" ? (
-          <Select
+          <Combobox
             value={g.destinationChoice}
             onValueChange={(v) => v && updateGroup(g.key, { destinationChoice: v })}
             items={{
               none: "Sin especificar",
               ...Object.fromEntries(accounts.filter((a) => a.id !== accountId).map((a) => [a.id, a.name])),
             }}
-          >
-            <SelectTrigger className="h-7 w-full text-sm">
-              <SelectValue placeholder="Cuenta destino" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="none">Sin especificar</SelectItem>
-              {accounts
-                .filter((a) => a.id !== accountId)
-                .map((a) => (
-                  <SelectItem key={a.id} value={a.id}>
-                    {a.name}
-                  </SelectItem>
-                ))}
-            </SelectContent>
-          </Select>
+            placeholder="Cuenta destino"
+            className="h-7 w-full text-sm"
+          />
         ) : (
           <CategorySelect
             categories={categories}
@@ -538,6 +524,14 @@ function GroupRow({
             className="h-7 w-full text-sm"
           />
         )}
+      </TableCell>
+      <TableCell className="min-w-[140px]">
+        <Input
+          className="h-7 text-sm"
+          placeholder="Ninguno"
+          value={g.projectTrip}
+          onChange={(e) => updateGroup(g.key, { projectTrip: e.target.value })}
+        />
       </TableCell>
       <TableCell>
         <input
