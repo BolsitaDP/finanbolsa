@@ -175,7 +175,7 @@ export function RuleFormDialog({
       }}
     >
       <DialogTrigger render={trigger} />
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-xl">
         <DialogHeader>
           <DialogTitle>{rule ? "Editar regla" : "Nueva regla"}</DialogTitle>
         </DialogHeader>

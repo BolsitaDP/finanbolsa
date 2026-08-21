@@ -13,6 +13,7 @@ import {
   Wallet,
   Upload,
   Repeat,
+  Briefcase,
 } from "lucide-react";
 
 import {
@@ -36,6 +37,7 @@ const items = [
   { title: "Importar", url: "/importar", icon: Upload },
   { title: "Categorías", url: "/categorias", icon: Tags },
   { title: "Payees", url: "/payees", icon: Users },
+  { title: "Proyectos / Viajes", url: "/proyectos", icon: Briefcase },
   { title: "Reglas", url: "/reglas", icon: Wand2 },
   { title: "Configuración", url: "/configuracion", icon: Settings },
 ];

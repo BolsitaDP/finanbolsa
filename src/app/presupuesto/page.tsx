@@ -95,11 +95,11 @@ export default async function PresupuestoPage({
 
       <Card className="max-w-sm">
         <CardHeader>
-          <CardTitle className="text-sm text-muted-foreground">Para presupuestar</CardTitle>
+          <CardTitle className="font-sans text-xs font-medium tracking-wide text-muted-foreground uppercase">Para presupuestar</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-1">
           <span
-            className={`text-2xl font-semibold ${toBeBudgeted < 0 ? "text-destructive" : ""}`}
+            className={`text-3xl font-semibold tracking-tight ${toBeBudgeted < 0 ? "text-destructive" : ""}`}
           >
             {formatMoney(toBeBudgeted, baseCurrency)}
           </span>

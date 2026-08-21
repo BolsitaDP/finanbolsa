@@ -30,8 +30,9 @@ type Row = {
   raw: Transaction;
   date: Date;
   type: string;
-  primaryLabel: string;
-  descriptionSubtext: string | null;
+  payeeId: string | null;
+  payeeLabel: string | null;
+  descriptionLabel: string | null;
   categoryId: string | null;
   categoryName: string | null;
   categoryKind: string | null;
@@ -54,6 +55,7 @@ export function TransaccionesTable({
   accounts,
   categories,
   payees,
+  projectNames,
   initialSearch,
   splitsByTx,
 }: {
@@ -61,6 +63,7 @@ export function TransaccionesTable({
   accounts: Account[];
   categories: Category[];
   payees: Payee[];
+  projectNames: string[];
   initialSearch?: string;
   splitsByTx?: Map<number, TransactionSplit[]>;
 }) {
@@ -73,14 +76,13 @@ export function TransaccionesTable({
     () =>
       transactions.map((tx) => {
         const payee = tx.payeeId ? (payeeName.get(tx.payeeId) ?? null) : null;
-        const primaryLabel =
-          payee ?? tx.description ?? (tx.type === "transfer" ? "Transferencia" : "—");
         return {
           raw: tx,
           date: tx.date,
           type: tx.type,
-          primaryLabel,
-          descriptionSubtext: tx.description && tx.description !== primaryLabel ? tx.description : null,
+          payeeId: tx.payeeId,
+          payeeLabel: payee,
+          descriptionLabel: tx.description ?? (tx.type === "transfer" ? "Transferencia" : null),
           categoryId: tx.categoryId,
           categoryName: tx.categoryId ? (categoryName.get(tx.categoryId) ?? tx.categoryId) : null,
           categoryKind: tx.categoryId ? (categoryKind.get(tx.categoryId) ?? null) : null,
@@ -104,7 +106,7 @@ export function TransaccionesTable({
       if (typeFilter !== "all" && r.type !== typeFilter) return false;
       if (accountFilter !== "all" && r.accountId !== accountFilter) return false;
       if (search) {
-        const haystack = `${r.primaryLabel} ${r.descriptionSubtext ?? ""} ${r.categoryName ?? ""} ${r.accountLabel}`.toLowerCase();
+        const haystack = `${r.payeeLabel ?? ""} ${r.descriptionLabel ?? ""} ${r.categoryName ?? ""} ${r.accountLabel}`.toLowerCase();
         if (!haystack.includes(search.toLowerCase())) return false;
       }
       return true;
@@ -120,29 +122,39 @@ export function TransaccionesTable({
           <span className="whitespace-nowrap text-muted-foreground">{formatDate(row.original.date)}</span>
         ),
         sortingFn: "datetime",
+        meta: { label: "Fecha" },
       },
       {
-        accessorKey: "primaryLabel",
+        id: "payeeOrDescription",
+        accessorFn: (r) => r.payeeLabel ?? r.descriptionLabel ?? "",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Payee / Descripción" />,
-        cell: ({ row }) => (
-          <div className="max-w-[280px]">
-            <div className="flex items-center gap-1.5 truncate font-medium">
-              {row.original.primaryLabel}
-              {row.original.hasSplits && (
+        meta: { label: "Payee / Descripción" },
+        cell: ({ row }) => {
+          const { payeeId, payeeLabel, descriptionLabel, hasSplits } = row.original;
+          return (
+            <div className="flex max-w-[280px] items-center gap-1.5 truncate font-medium">
+              {payeeId && payeeLabel ? (
+                <Link
+                  href={`/payees/${payeeId}`}
+                  className="truncate hover:underline"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {payeeLabel}
+                </Link>
+              ) : (
+                <span className="truncate">{descriptionLabel ?? "—"}</span>
+              )}
+              {hasSplits && (
                 <SplitIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label="Desglosado" />
               )}
             </div>
-            {/* Always render this line, even when blank, so every row reserves the
-                same height regardless of whether it has a secondary description. */}
-            <div className="truncate text-xs text-muted-foreground">
-              {row.original.descriptionSubtext || " "}
-            </div>
-          </div>
-        ),
+          );
+        },
       },
       {
         accessorKey: "categoryName",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Categoría" />,
+        meta: { label: "Categoría" },
         cell: ({ row }) =>
           row.original.categoryName && row.original.categoryId ? (
             <Link href={`/categorias/${row.original.categoryId}`}>
@@ -157,6 +169,7 @@ export function TransaccionesTable({
       {
         accessorKey: "accountLabel",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Cuenta" />,
+        meta: { label: "Cuenta" },
         cell: ({ row }) => (
           <div className="flex items-center gap-1 whitespace-nowrap">
             {row.original.accountLabel}
@@ -174,6 +187,7 @@ export function TransaccionesTable({
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title="Monto" className="ml-auto justify-end" />
         ),
+        meta: { label: "Monto" },
         cell: ({ row }) => {
           const { type, amountMinor, currency } = row.original;
           const sign = type === "expense" ? "-" : type === "income" ? "+" : "";
@@ -181,7 +195,7 @@ export function TransaccionesTable({
             type === "expense"
               ? "text-destructive"
               : type === "income"
-                ? "text-green-600 dark:text-green-500"
+                ? "text-success"
                 : "text-foreground";
           return (
             <div className={`text-right font-medium whitespace-nowrap ${color}`}>
@@ -195,12 +209,14 @@ export function TransaccionesTable({
         id: "actions",
         header: "",
         enableSorting: false,
+        enableHiding: false,
         cell: ({ row }) => (
           <div className="flex justify-end gap-1">
             <TransactionFormDialog
               accounts={accounts}
               categories={categories}
               payees={payees}
+              projectNames={projectNames}
               transaction={row.original.raw}
               splits={splitsByTx?.get(row.original.raw.id) ?? []}
               trigger={
@@ -219,7 +235,7 @@ export function TransaccionesTable({
         ),
       },
     ],
-    [accounts, categories, payees, accountName, splitsByTx]
+    [accounts, categories, payees, projectNames, accountName, splitsByTx]
   );
 
   return (
@@ -230,6 +246,7 @@ export function TransaccionesTable({
       pageSize={20}
       getRowId={(row) => String(row.raw.id)}
       emptyMessage="No hay transacciones que coincidan."
+      storageKey="transacciones"
       bulkToolbar={(selected, clear) => {
         const ids = selected.map((r) => r.raw.id);
         return (
@@ -239,6 +256,7 @@ export function TransaccionesTable({
               accounts={accounts}
               categories={categories}
               payees={payees}
+              projectNames={projectNames}
               trigger={
                 <Button variant="outline" size="sm">
                   <PencilIcon /> Editar

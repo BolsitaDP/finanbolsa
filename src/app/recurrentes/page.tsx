@@ -49,12 +49,12 @@ export default async function RecurrentesPage() {
           {[...monthlyByCurrency.entries()].map(([currency, total]) => (
             <Card key={currency}>
               <CardHeader>
-                <CardTitle className="text-sm text-muted-foreground">
+                <CardTitle className="font-sans text-xs font-medium tracking-wide text-muted-foreground uppercase">
                   Recurrente mensual estimado ({currency})
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <span className="text-2xl font-semibold">{formatMoney(total, currency)}</span>
+                <span className="text-3xl font-semibold tracking-tight">{formatMoney(total, currency)}</span>
               </CardContent>
             </Card>
           ))}

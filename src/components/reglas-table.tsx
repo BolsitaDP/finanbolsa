@@ -55,6 +55,7 @@ export function ReglasTable({
         accessorFn: (r) => r.name ?? `Regla #${r.id}`,
         header: ({ column }) => <DataTableColumnHeader column={column} title="Nombre" />,
         cell: ({ getValue }) => <span className="font-medium">{getValue<string>()}</span>,
+        meta: { label: "Nombre" },
       },
       {
         accessorKey: "conditionsText",
@@ -63,6 +64,7 @@ export function ReglasTable({
           <span className="text-sm text-muted-foreground">{row.original.conditionsText}</span>
         ),
         enableSorting: false,
+        meta: { label: "Si" },
       },
       {
         accessorKey: "actionsText",
@@ -71,16 +73,19 @@ export function ReglasTable({
           <span className="text-sm text-muted-foreground">{row.original.actionsText}</span>
         ),
         enableSorting: false,
+        meta: { label: "Entonces" },
       },
       {
         accessorKey: "enabled",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Estado" />,
         cell: ({ row }) => <ToggleRuleButton id={row.original.id} enabled={row.original.enabled} />,
+        meta: { label: "Estado" },
       },
       {
         id: "actions",
         header: "",
         enableSorting: false,
+        enableHiding: false,
         cell: ({ row }) => (
           <div className="flex justify-end gap-1">
             <RuleFormDialog
@@ -114,6 +119,7 @@ export function ReglasTable({
       pageSize={20}
       getRowId={(row) => String(row.id)}
       emptyMessage="No hay reglas que coincidan."
+      storageKey="reglas"
       bulkToolbar={(selected, clear) => {
         const ids = selected.map((r) => r.id);
         return (

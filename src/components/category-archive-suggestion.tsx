@@ -30,9 +30,9 @@ export function CategoryArchiveSuggestion({
   }
 
   return (
-    <Card className="border-amber-500/50 bg-amber-500/5">
+    <Card className="border-warning/40 bg-warning/5">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base text-amber-700 dark:text-amber-400">
+        <CardTitle className="flex items-center gap-2 text-base text-warning">
           <TriangleAlertIcon className="size-4" />
           Sin actividad hace {monthsSinceLastTx} meses
         </CardTitle>

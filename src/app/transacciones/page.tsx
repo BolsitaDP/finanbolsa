@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { TransactionFormDialog } from "@/components/transaction-form-dialog";
 import { TransaccionesTable } from "@/components/transacciones-table";
 import { groupSplitsByTransaction } from "@/lib/splits";
+import { getAllProjectNames } from "@/app/proyectos/actions";
 
 export default async function TransaccionesPage({
   searchParams,
@@ -15,12 +16,13 @@ export default async function TransaccionesPage({
   searchParams: Promise<{ q?: string }>;
 }) {
   const { q } = await searchParams;
-  const [allTransactions, allAccounts, allCategories, allPayees, allSplits] = await Promise.all([
+  const [allTransactions, allAccounts, allCategories, allPayees, allSplits, projectNames] = await Promise.all([
     db.select().from(transactions).where(isNull(transactions.deletedAt)),
     db.select().from(accounts).orderBy(asc(accounts.name)),
     db.select().from(categories).orderBy(asc(categories.name)),
     db.select().from(payees).orderBy(asc(payees.name)),
     db.select().from(transactionSplits),
+    getAllProjectNames(),
   ]);
   const splitsByTx = groupSplitsByTransaction(allSplits);
 
@@ -37,6 +39,7 @@ export default async function TransaccionesPage({
           accounts={allAccounts}
           categories={allCategories}
           payees={allPayees}
+          projectNames={projectNames}
           trigger={
             <Button size="sm">
               <PlusIcon /> Nueva transacción
@@ -52,6 +55,7 @@ export default async function TransaccionesPage({
             accounts={allAccounts}
             categories={allCategories}
             payees={allPayees}
+            projectNames={projectNames}
             initialSearch={q}
             splitsByTx={splitsByTx}
           />

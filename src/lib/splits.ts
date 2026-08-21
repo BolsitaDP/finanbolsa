@@ -40,3 +40,55 @@ export function categoryAllocations(
   if (remainder > 0) allocations.push({ categoryId: tx.categoryId, amountMinor: remainder });
   return allocations;
 }
+
+export type SpendAllocation = {
+  date: Date;
+  currency: string;
+  amountMinor: number;
+  categoryId: string | null;
+  payeeId: string | null;
+};
+
+/**
+ * Unified spend attribution for one category or payee's detail page: each
+ * transaction directly tagged with it contributes whatever hasn't been split
+ * away to something else (its full amount when it has no splits), plus
+ * whatever other transactions' splits specifically allocated to it. Shared by
+ * the category and payee detail pages — the caller does the DB filtering
+ * (by categoryId or payeeId respectively) and this just combines the two
+ * sources; both category and payee ids ride along on every entry so either
+ * page can derive its own "top X" breakdown from the same list.
+ */
+export function buildAllocations(
+  directTx: Pick<Transaction, "id" | "date" | "currency" | "amountMinor" | "categoryId" | "payeeId">[],
+  splitsByTx: Map<number, TransactionSplit[]>,
+  splitsIntoTarget: TransactionSplit[],
+  splitParentById: Map<number, Pick<Transaction, "date" | "currency">>
+): SpendAllocation[] {
+  const allocations: SpendAllocation[] = [];
+  for (const t of directTx) {
+    const splits = splitsByTx.get(t.id) ?? [];
+    const remainder = t.amountMinor - splits.reduce((s, sp) => s + sp.amountMinor, 0);
+    if (remainder > 0) {
+      allocations.push({
+        date: t.date,
+        currency: t.currency,
+        amountMinor: remainder,
+        categoryId: t.categoryId,
+        payeeId: t.payeeId,
+      });
+    }
+  }
+  for (const s of splitsIntoTarget) {
+    const parent = splitParentById.get(s.transactionId);
+    if (!parent) continue;
+    allocations.push({
+      date: parent.date,
+      currency: parent.currency,
+      amountMinor: s.amountMinor,
+      categoryId: s.categoryId,
+      payeeId: s.payeeId,
+    });
+  }
+  return allocations;
+}

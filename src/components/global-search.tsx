@@ -100,7 +100,7 @@ export function GlobalSearch() {
       <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent
           showCloseButton={false}
-          className="top-[18%] max-w-lg translate-y-0 gap-0 overflow-hidden p-0"
+          className="top-[18%] max-w-xl translate-y-0 gap-0 overflow-hidden p-0"
         >
           <DialogTitle className="sr-only">Búsqueda global</DialogTitle>
           <div className="flex items-center gap-2 border-b px-3 py-2.5">

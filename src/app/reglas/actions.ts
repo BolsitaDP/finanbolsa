@@ -28,6 +28,57 @@ export async function createRule(input: RuleInput) {
   revalidatePath("/reglas");
 }
 
+/**
+ * Quick-create a rule from a transaction's (possibly user-edited) condition
+ * text, category, and payee — confirmed via a preview dialog before this is
+ * called, so the user doesn't have to retype it on the Reglas page. If a rule
+ * with the exact same condition already exists, reaffirm it (update its
+ * actions, force enabled) instead of creating a duplicate — mirrors the
+ * upsert used by the "Regla" checkbox in the import flow.
+ */
+export async function createRuleFromTransaction(input: {
+  merchantLabel: string;
+  categoryId: string | null;
+  payeeId: string | null;
+}) {
+  const merchantLabel = input.merchantLabel.trim();
+  if (!merchantLabel) {
+    throw new Error("La condición de la regla no puede estar vacía.");
+  }
+  if (!input.categoryId && !input.payeeId) {
+    throw new Error("Selecciona una categoría o un payee para la regla.");
+  }
+
+  const conditions: RuleCondition[] = [{ field: "description", op: "contains", value: merchantLabel }];
+  const actions: RuleAction[] = [
+    ...(input.categoryId ? [{ field: "categoryId", value: input.categoryId } as RuleAction] : []),
+    ...(input.payeeId ? [{ field: "payeeId", value: input.payeeId } as RuleAction] : []),
+  ];
+  const signature = JSON.stringify(conditions);
+
+  const existingRules = await db
+    .select({ id: rules.id, conditions: rules.conditions, sortOrder: rules.sortOrder })
+    .from(rules);
+  const match = existingRules.find((r) => JSON.stringify(r.conditions) === signature);
+
+  if (match) {
+    await db.update(rules).set({ actions, enabled: true }).where(eq(rules.id, match.id));
+  } else {
+    const maxOrder = existingRules.reduce((m, r) => Math.max(m, r.sortOrder), 0);
+    await db.insert(rules).values({
+      name: merchantLabel,
+      conditions,
+      actions,
+      sortOrder: maxOrder + 1,
+    });
+  }
+
+  revalidatePath("/reglas");
+  revalidatePath("/transacciones");
+  revalidatePath("/");
+  return { merchantLabel };
+}
+
 export async function updateRule(id: number, input: RuleInput) {
   await db.update(rules).set(input).where(eq(rules.id, id));
   revalidatePath("/reglas");

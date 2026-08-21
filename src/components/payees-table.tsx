@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import type { ColumnDef } from "@tanstack/react-table";
 import { PencilIcon } from "lucide-react";
 
@@ -43,13 +44,19 @@ export function PayeesTable({
       {
         accessorKey: "name",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Nombre" />,
-        cell: ({ row }) => <span className="font-medium">{row.original.name}</span>,
+        cell: ({ row }) => (
+          <Link href={`/payees/${row.original.id}`} className="font-medium hover:underline">
+            {row.original.name}
+          </Link>
+        ),
+        meta: { label: "Nombre" },
       },
       {
         id: "defaultCategory",
         accessorFn: (p) => (p.defaultCategoryId ? (categoryName.get(p.defaultCategoryId) ?? "") : ""),
         header: ({ column }) => <DataTableColumnHeader column={column} title="Categoría por defecto" />,
         cell: ({ getValue }) => getValue<string>() || "—",
+        meta: { label: "Categoría por defecto" },
       },
       {
         accessorKey: "notes",
@@ -57,11 +64,13 @@ export function PayeesTable({
         cell: ({ row }) => (
           <span className="text-muted-foreground">{row.original.notes ?? "—"}</span>
         ),
+        meta: { label: "Notas" },
       },
       {
         id: "actions",
         header: "",
         enableSorting: false,
+        enableHiding: false,
         cell: ({ row }) => (
           <div className="flex justify-end gap-1">
             <PayeeFormDialog
@@ -94,6 +103,7 @@ export function PayeesTable({
       pageSize={20}
       getRowId={(row) => row.id}
       emptyMessage="No hay payees que coincidan."
+      storageKey="payees"
       bulkToolbar={(selected, clear) => {
         const ids = selected.map((p) => p.id);
         return (

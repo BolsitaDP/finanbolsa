@@ -1,11 +1,19 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { memo, useCallback, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { UploadIcon, ArrowLeftIcon, CheckIcon, PencilIcon, TriangleAlertIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -23,18 +31,13 @@ import { CategorySelect } from "@/components/category-select";
 
 import { bulkImportTransactions, parseStatement } from "@/app/importar/actions";
 import type { ParsedGroup } from "@/lib/import-types";
-import { TRANSACTION_TYPES, type Currency, type TransactionType } from "@/lib/enums";
+import { TRANSACTION_TYPES, TRANSACTION_TYPE_LABELS, type Currency, type TransactionType } from "@/lib/enums";
 import { formatMoney } from "@/lib/format";
+import { projectTripItems } from "@/lib/project-options";
 
 type Account = { id: string; name: string; currency: string };
 type Category = { id: string; name: string; kind: string; parentCategoryId: string | null };
 type Payee = { id: string; name: string };
-
-const TYPE_LABELS: Record<TransactionType, string> = {
-  expense: "Gasto",
-  income: "Ingreso",
-  transfer: "Transferencia",
-};
 
 type EditableGroup = ParsedGroup & {
   typeChoice: TransactionType;
@@ -42,7 +45,7 @@ type EditableGroup = ParsedGroup & {
   newPayeeName: string;
   categoryChoice: string; // "none" | category id
   destinationChoice: string; // "none" | account id
-  projectTrip: string;
+  projectTrip: string; // "none" | project name
   skip: boolean;
   createRule: boolean;
   // Frozen at parse time from whether a payee/rule already suggested a
@@ -57,12 +60,15 @@ export function ImportWizard({
   accounts,
   categories,
   payees,
+  projectNames,
 }: {
   accounts: Account[];
   categories: Category[];
   payees: Payee[];
+  projectNames: string[];
 }) {
   const [step, setStep] = useState<"upload" | "review" | "done">("upload");
+  const [uploadOpen, setUploadOpen] = useState(false);
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? "");
   const [file, setFile] = useState<File | null>(null);
   const [groups, setGroups] = useState<EditableGroup[]>([]);
@@ -103,7 +109,7 @@ export function ImportWizard({
             newPayeeName: g.suggestedPayeeId ? "" : g.merchantLabel,
             categoryChoice: g.suggestedCategoryId ?? "none",
             destinationChoice: "none",
-            projectTrip: "",
+            projectTrip: "none",
             skip: false,
             // Off by default: with hundreds of one-off "sueltas" transactions
             // per import, auto-creating a rule for every single one is what
@@ -114,24 +120,29 @@ export function ImportWizard({
           }))
         );
         setStep("review");
+        setUploadOpen(false);
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Error al leer el PDF");
       }
     });
   }
 
-  function updateGroup(key: string, patch: Partial<EditableGroup>) {
+  // Stable identities so GroupRow (memoized below) can bail out of
+  // re-rendering for every other row when only one row's fields change —
+  // with hundreds of rows in a statement, re-rendering all of them on every
+  // keystroke is what made typing in a row's fields feel laggy.
+  const updateGroup = useCallback((key: string, patch: Partial<EditableGroup>) => {
     setGroups((prev) => prev.map((g) => (g.key === key ? { ...g, ...patch } : g)));
-  }
+  }, []);
 
-  function toggleSelected(key: string) {
+  const toggleSelected = useCallback((key: string) => {
     setSelectedKeys((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
       return next;
     });
-  }
+  }, []);
 
   function toggleSelectAll(keys: string[]) {
     setSelectedKeys((prev) => {
@@ -160,12 +171,17 @@ export function ImportWizard({
           newPayeeName: g.payeeChoice === "new" ? g.newPayeeName || g.merchantLabel : null,
           categoryId: g.categoryChoice !== "none" ? g.categoryChoice : null,
           destinationAccountId: g.destinationChoice !== "none" ? g.destinationChoice : null,
-          projectTrip: g.projectTrip || null,
+          projectTrip: g.projectTrip !== "none" ? g.projectTrip : null,
           skip: g.skip,
           createRule: g.createRule,
           transactions: g.transactions,
         }));
-        const result = await bulkImportTransactions(accountId, account.currency as Currency, input);
+        const result = await bulkImportTransactions(
+          accountId,
+          account.currency as Currency,
+          input,
+          file?.name ?? "extracto.pdf"
+        );
         setSummary(result);
         setStep("done");
         toast.success(`${result.imported} transacciones importadas`);
@@ -180,7 +196,7 @@ export function ImportWizard({
       <Card className="max-w-md">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <CheckIcon className="size-5 text-green-600" /> Importación completa
+            <CheckIcon className="size-5 text-success" /> Importación completa
           </CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-2 text-sm">
@@ -192,7 +208,8 @@ export function ImportWizard({
           )}
           {summary.rulesCreated > 0 && (
             <p className="text-muted-foreground">
-              {summary.rulesCreated} reglas nuevas creadas para futuras importaciones.
+              {summary.rulesCreated} {summary.rulesCreated === 1 ? "regla guardada" : "reglas guardadas"} para
+              futuras importaciones.
             </p>
           )}
           <Button
@@ -233,9 +250,9 @@ export function ImportWizard({
         </div>
 
         {unrecognized.length > 0 && (
-          <Card className="border-amber-500/50 bg-amber-500/5">
+          <Card className="border-warning/40 bg-warning/5">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base text-amber-700 dark:text-amber-400">
+              <CardTitle className="flex items-center gap-2 text-base text-warning">
                 <TriangleAlertIcon className="size-4" />
                 {unrecognized.length} línea{unrecognized.length === 1 ? "" : "s"} del PDF no se reconocieron
               </CardTitle>
@@ -269,6 +286,7 @@ export function ImportWizard({
               accounts={accounts}
               categories={categories}
               payees={payees}
+              projectNames={projectNames}
               onApply={applyBulkPatch}
               trigger={
                 <Button variant="outline" size="sm">
@@ -287,6 +305,7 @@ export function ImportWizard({
           accounts={accounts}
           categories={categories}
           payees={payees}
+          projectNames={projectNames}
           updateGroup={updateGroup}
           selectedKeys={selectedKeys}
           onToggleSelected={toggleSelected}
@@ -301,6 +320,7 @@ export function ImportWizard({
           accounts={accounts}
           categories={categories}
           payees={payees}
+          projectNames={projectNames}
           updateGroup={updateGroup}
           selectedKeys={selectedKeys}
           onToggleSelected={toggleSelected}
@@ -311,34 +331,57 @@ export function ImportWizard({
   }
 
   return (
-    <Card className="max-w-md">
-      <CardHeader>
-        <CardTitle>Subir extracto</CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-medium">Cuenta</label>
-          <Combobox
-            value={accountId}
-            onValueChange={(v) => v && setAccountId(v)}
-            items={Object.fromEntries(accounts.map((a) => [a.id, `${a.name} (${a.currency})`]))}
-            className="w-full"
-          />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-medium">Extracto PDF (Bancolombia, RappiCard o Nu)</label>
-          <input
-            type="file"
-            accept="application/pdf"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            className="text-sm"
-          />
-        </div>
-        <Button onClick={handleParse} disabled={isPending || !file} className="self-start">
-          <UploadIcon /> Analizar PDF
-        </Button>
-      </CardContent>
-    </Card>
+    <>
+      <Card className="max-w-md">
+        <CardHeader>
+          <CardTitle>Importar extracto</CardTitle>
+          <CardDescription>
+            Sube un PDF de Bancolombia, RappiCard o Nu para revisar sus movimientos antes de importarlos.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button onClick={() => setUploadOpen(true)} className="self-start">
+            <UploadIcon /> Importar extracto
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Importar extracto</DialogTitle>
+            <DialogDescription>Selecciona el archivo y la cuenta a la que corresponde.</DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium">Extracto PDF (Bancolombia, RappiCard o Nu)</label>
+              <input
+                type="file"
+                accept="application/pdf"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                className="text-sm"
+              />
+            </div>
+            {file && (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-medium">¿A qué cuenta quieres cargarlo?</label>
+                <Combobox
+                  value={accountId}
+                  onValueChange={(v) => v && setAccountId(v)}
+                  items={Object.fromEntries(accounts.map((a) => [a.id, `${a.name} (${a.currency})`]))}
+                  className="w-full"
+                />
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button onClick={handleParse} disabled={isPending || !file || !accountId}>
+              <UploadIcon /> Analizar PDF
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -350,6 +393,7 @@ function GroupsSection({
   accounts,
   categories,
   payees,
+  projectNames,
   updateGroup,
   selectedKeys,
   onToggleSelected,
@@ -362,6 +406,7 @@ function GroupsSection({
   accounts: Account[];
   categories: Category[];
   payees: Payee[];
+  projectNames: string[];
   updateGroup: (key: string, patch: Partial<EditableGroup>) => void;
   selectedKeys: Set<string>;
   onToggleSelected: (key: string) => void;
@@ -412,9 +457,10 @@ function GroupsSection({
                 accounts={accounts}
                 categories={categories}
                 payees={payees}
+                projectNames={projectNames}
                 updateGroup={updateGroup}
                 selected={selectedKeys.has(g.key)}
-                onToggleSelect={() => onToggleSelected(g.key)}
+                onToggleSelected={onToggleSelected}
               />
             ))}
           </TableBody>
@@ -424,24 +470,26 @@ function GroupsSection({
   );
 }
 
-function GroupRow({
+const GroupRow = memo(function GroupRow({
   g,
   accountId,
   accounts,
   categories,
   payees,
+  projectNames,
   updateGroup,
   selected,
-  onToggleSelect,
+  onToggleSelected,
 }: {
   g: EditableGroup;
   accountId: string;
   accounts: Account[];
   categories: Category[];
   payees: Payee[];
+  projectNames: string[];
   updateGroup: (key: string, patch: Partial<EditableGroup>) => void;
   selected: boolean;
-  onToggleSelect: () => void;
+  onToggleSelected: (key: string) => void;
 }) {
   return (
     <TableRow className={g.skip ? "opacity-50" : undefined}>
@@ -449,7 +497,7 @@ function GroupRow({
         <input
           type="checkbox"
           checked={selected}
-          onChange={onToggleSelect}
+          onChange={() => onToggleSelected(g.key)}
           aria-label={`Seleccionar ${g.merchantLabel}`}
         />
       </TableCell>
@@ -473,7 +521,7 @@ function GroupRow({
         <Combobox
           value={g.typeChoice}
           onValueChange={(v) => v && updateGroup(g.key, { typeChoice: v as TransactionType })}
-          items={Object.fromEntries(TRANSACTION_TYPES.map((t) => [t, TYPE_LABELS[t]]))}
+          items={Object.fromEntries(TRANSACTION_TYPES.map((t) => [t, TRANSACTION_TYPE_LABELS[t]]))}
           className="h-7 w-full text-sm"
         />
       </TableCell>
@@ -526,19 +574,24 @@ function GroupRow({
         )}
       </TableCell>
       <TableCell className="min-w-[140px]">
-        <Input
-          className="h-7 text-sm"
-          placeholder="Ninguno"
+        <Combobox
           value={g.projectTrip}
-          onChange={(e) => updateGroup(g.key, { projectTrip: e.target.value })}
+          onValueChange={(v) => v && updateGroup(g.key, { projectTrip: v })}
+          items={projectTripItems(projectNames)}
+          placeholder="Ninguno"
+          className="h-7 w-full text-sm"
         />
       </TableCell>
       <TableCell>
-        <input
-          type="checkbox"
-          checked={g.createRule}
-          onChange={(e) => updateGroup(g.key, { createRule: e.target.checked })}
-        />
+        {g.typeChoice === "transfer" ? (
+          <span className="text-sm text-muted-foreground">—</span>
+        ) : (
+          <input
+            type="checkbox"
+            checked={g.createRule}
+            onChange={(e) => updateGroup(g.key, { createRule: e.target.checked })}
+          />
+        )}
       </TableCell>
       <TableCell>
         <input
@@ -549,4 +602,4 @@ function GroupRow({
       </TableCell>
     </TableRow>
   );
-}
+});

@@ -26,42 +26,55 @@ import {
 import { Input } from "@/components/ui/input";
 import { Combobox } from "@/components/ui/combobox";
 
-import { createAccount, updateAccount } from "@/app/cuentas/actions";
-import { ACCOUNT_STATUSES, ACCOUNT_TYPES, CURRENCIES } from "@/lib/enums";
-import { fromDateInputValue, toDateInputValue } from "@/lib/date-input";
+import { createProject, updateProject } from "@/app/proyectos/actions";
+import { toDateInputValue, fromDateInputValue } from "@/lib/date-input";
+
+const PROJECT_TYPES = { project: "Proyecto", trip: "Viaje" } as const;
+
+const PROJECT_COLORS = [
+  "bg-red-500",
+  "bg-orange-500",
+  "bg-amber-500",
+  "bg-green-500",
+  "bg-emerald-500",
+  "bg-teal-500",
+  "bg-cyan-500",
+  "bg-sky-500",
+  "bg-blue-500",
+  "bg-indigo-500",
+  "bg-violet-500",
+  "bg-purple-500",
+  "bg-fuchsia-500",
+  "bg-pink-500",
+  "bg-rose-500",
+];
 
 const schema = z.object({
   name: z.string().min(1, "Requerido"),
-  type: z.enum(ACCOUNT_TYPES),
-  currency: z.enum(CURRENCIES),
-  creditLimitMinor: z.string(),
-  status: z.enum(ACCOUNT_STATUSES),
-  openedAt: z.string(),
+  type: z.enum(["project", "trip"]),
+  color: z.string(),
+  startDate: z.string(),
+  endDate: z.string(),
   notes: z.string(),
-  referenceDate: z.string().min(1, "Requerido"),
-  referenceBalanceMinor: z.string().min(1, "Requerido"),
 });
 
 type FormValues = z.infer<typeof schema>;
 
-type Account = {
+type Project = {
   id: string;
   name: string;
   type: string;
-  currency: string;
-  creditLimitMinor: number | null;
-  status: string;
-  openedAt: Date | null;
+  color: string | null;
+  startDate: Date | null;
+  endDate: Date | null;
   notes: string | null;
-  referenceDate: Date;
-  referenceBalanceMinor: number;
 };
 
-export function AccountFormDialog({
-  account,
+export function ProjectFormDialog({
+  project,
   trigger,
 }: {
-  account?: Account;
+  project?: Project;
   trigger: React.ReactElement;
 }) {
   const [open, setOpen] = useState(false);
@@ -70,16 +83,12 @@ export function AccountFormDialog({
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
-      name: account?.name ?? "",
-      type: (account?.type as FormValues["type"]) ?? "bank",
-      currency: (account?.currency as FormValues["currency"]) ?? "COP",
-      creditLimitMinor: account?.creditLimitMinor != null ? String(account.creditLimitMinor) : "",
-      status: (account?.status as FormValues["status"]) ?? "active",
-      openedAt: toDateInputValue(account?.openedAt ?? null),
-      notes: account?.notes ?? "",
-      referenceDate: toDateInputValue(account?.referenceDate ?? new Date()),
-      referenceBalanceMinor:
-        account?.referenceBalanceMinor != null ? String(account.referenceBalanceMinor) : "0",
+      name: project?.name ?? "",
+      type: (project?.type as FormValues["type"]) ?? "project",
+      color: project?.color ?? "none",
+      startDate: toDateInputValue(project?.startDate ?? null),
+      endDate: toDateInputValue(project?.endDate ?? null),
+      notes: project?.notes ?? "",
     },
   });
 
@@ -89,21 +98,18 @@ export function AccountFormDialog({
         const input = {
           name: values.name,
           type: values.type,
-          currency: values.currency,
-          creditLimitMinor: values.creditLimitMinor ? Number(values.creditLimitMinor) : null,
-          status: values.status,
-          openedAt: values.openedAt ? fromDateInputValue(values.openedAt) : null,
+          color: values.color !== "none" ? values.color : null,
+          startDate: values.startDate ? fromDateInputValue(values.startDate) : null,
+          endDate: values.endDate ? fromDateInputValue(values.endDate) : null,
           notes: values.notes || null,
-          referenceDate: fromDateInputValue(values.referenceDate),
-          referenceBalanceMinor: Number(values.referenceBalanceMinor),
         };
-        if (account) {
-          await updateAccount(account.id, input);
-          toast.success("Cuenta actualizada");
+        if (project) {
+          await updateProject(project.id, input);
+          toast.success("Proyecto/viaje actualizado");
         } else {
-          await createAccount(input);
-          toast.success("Cuenta creada");
-          form.reset();
+          await createProject(input);
+          toast.success("Proyecto/viaje creado");
+          form.reset({ name: "", type: "project", color: "none", startDate: "", endDate: "", notes: "" });
         }
         setOpen(false);
       } catch (err) {
@@ -115,9 +121,9 @@ export function AccountFormDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger render={trigger} />
-      <DialogContent className="max-w-xl">
+      <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>{account ? "Editar cuenta" : "Nueva cuenta"}</DialogTitle>
+          <DialogTitle>{project ? "Editar proyecto/viaje" : "Nuevo proyecto/viaje"}</DialogTitle>
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col gap-4">
@@ -128,7 +134,7 @@ export function AccountFormDialog({
                 <FormItem>
                   <FormLabel>Nombre</FormLabel>
                   <FormControl>
-                    <Input placeholder="Ej. Bancolombia" {...field} />
+                    <Input placeholder="Ej. Viaje a Madrid" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -145,7 +151,7 @@ export function AccountFormDialog({
                       <Combobox
                         value={field.value}
                         onValueChange={field.onChange}
-                        items={Object.fromEntries(ACCOUNT_TYPES.map((t) => [t, t.replace("_", " ")]))}
+                        items={PROJECT_TYPES}
                         className="w-full"
                       />
                     </FormControl>
@@ -155,15 +161,20 @@ export function AccountFormDialog({
               />
               <FormField
                 control={form.control}
-                name="currency"
+                name="color"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Moneda</FormLabel>
+                    <FormLabel>Color</FormLabel>
                     <FormControl>
                       <Combobox
                         value={field.value}
                         onValueChange={field.onChange}
-                        items={Object.fromEntries(CURRENCIES.map((c) => [c, c]))}
+                        items={{
+                          none: "Sin color",
+                          ...Object.fromEntries(
+                            PROJECT_COLORS.map((c) => [c, c.replace("bg-", "").replace("-500", "")])
+                          ),
+                        }}
                         className="w-full"
                       />
                     </FormControl>
@@ -175,17 +186,12 @@ export function AccountFormDialog({
             <div className="grid grid-cols-2 gap-3">
               <FormField
                 control={form.control}
-                name="status"
+                name="startDate"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Estado</FormLabel>
+                    <FormLabel>Fecha inicio</FormLabel>
                     <FormControl>
-                      <Combobox
-                        value={field.value}
-                        onValueChange={field.onChange}
-                        items={Object.fromEntries(ACCOUNT_STATUSES.map((s) => [s, s]))}
-                        className="w-full"
-                      />
+                      <Input type="date" placeholder="Opcional" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -193,59 +199,18 @@ export function AccountFormDialog({
               />
               <FormField
                 control={form.control}
-                name="creditLimitMinor"
+                name="endDate"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Cupo de crédito</FormLabel>
+                    <FormLabel>Fecha fin</FormLabel>
                     <FormControl>
-                      <Input type="number" placeholder="Opcional" {...field} />
+                      <Input type="date" placeholder="Opcional" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <FormField
-                control={form.control}
-                name="referenceDate"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Fecha de referencia</FormLabel>
-                    <FormControl>
-                      <Input type="date" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="referenceBalanceMinor"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Saldo de referencia</FormLabel>
-                    <FormControl>
-                      <Input type="number" step="any" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
-            <FormField
-              control={form.control}
-              name="openedAt"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Fecha de apertura</FormLabel>
-                  <FormControl>
-                    <Input type="date" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
             <FormField
               control={form.control}
               name="notes"
@@ -253,7 +218,7 @@ export function AccountFormDialog({
                 <FormItem>
                   <FormLabel>Notas</FormLabel>
                   <FormControl>
-                    <Input {...field} />
+                    <Input placeholder="Opcional" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -261,7 +226,7 @@ export function AccountFormDialog({
             />
             <DialogFooter>
               <Button type="submit" disabled={isPending}>
-                {account ? "Guardar cambios" : "Crear cuenta"}
+                {project ? "Guardar cambios" : "Crear"}
               </Button>
             </DialogFooter>
           </form>

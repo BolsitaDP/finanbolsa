@@ -29,7 +29,7 @@ function MonthDelta({ current, previous, higherIsBad }: { current: number; previ
   if (Math.abs(pct) < 0.5) return <span className="text-xs text-muted-foreground">= vs mes pasado</span>;
   return (
     <span
-      className={`flex items-center gap-0.5 text-xs ${isGood ? "text-green-600 dark:text-green-500" : "text-destructive"}`}
+      className={`flex items-center gap-0.5 text-xs ${isGood ? "text-success" : "text-destructive"}`}
     >
       {isUp ? <ArrowUpIcon className="size-3" /> : <ArrowDownIcon className="size-3" />}
       {Math.abs(pct).toFixed(0)}% vs mes pasado
@@ -94,12 +94,12 @@ export default async function DashboardPage() {
         {monthCurrencies.map((currency) => (
           <Card key={`expense-${currency}`}>
             <CardHeader>
-              <CardTitle className="text-sm text-muted-foreground">
+              <CardTitle className="font-sans text-xs font-medium tracking-wide text-muted-foreground uppercase">
                 Gasto este mes ({currency})
               </CardTitle>
             </CardHeader>
             <CardContent className="flex flex-col gap-1">
-              <span className="text-2xl font-semibold">
+              <span className="text-3xl font-semibold tracking-tight">
                 {formatMoney(expenseThisMonth.get(currency) ?? 0, currency)}
               </span>
               <MonthDelta
@@ -113,12 +113,12 @@ export default async function DashboardPage() {
         {monthCurrencies.map((currency) => (
           <Card key={`income-${currency}`}>
             <CardHeader>
-              <CardTitle className="text-sm text-muted-foreground">
+              <CardTitle className="font-sans text-xs font-medium tracking-wide text-muted-foreground uppercase">
                 Ingreso este mes ({currency})
               </CardTitle>
             </CardHeader>
             <CardContent className="flex flex-col gap-1">
-              <span className="text-2xl font-semibold">
+              <span className="text-3xl font-semibold tracking-tight">
                 {formatMoney(incomeThisMonth.get(currency) ?? 0, currency)}
               </span>
               <MonthDelta
@@ -132,10 +132,10 @@ export default async function DashboardPage() {
         {budgetsThisMonth.length > 0 && (
           <Card>
             <CardHeader>
-              <CardTitle className="text-sm text-muted-foreground">Presupuesto este mes</CardTitle>
+              <CardTitle className="font-sans text-xs font-medium tracking-wide text-muted-foreground uppercase">Presupuesto este mes</CardTitle>
             </CardHeader>
             <CardContent className="flex flex-col gap-1">
-              <span className={`text-2xl font-semibold ${overBudgetCount > 0 ? "text-destructive" : ""}`}>
+              <span className={`text-3xl font-semibold tracking-tight ${overBudgetCount > 0 ? "text-destructive" : ""}`}>
                 {overBudgetCount} / {budgetsThisMonth.length}
               </span>
               <Link href="/presupuesto" className="text-xs text-muted-foreground hover:underline">

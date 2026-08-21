@@ -3,12 +3,17 @@ import { asc } from "drizzle-orm";
 import { db } from "@/db";
 import { accounts, categories, payees } from "@/db/schema";
 import { ImportWizard } from "@/components/import-wizard";
+import { ImportHistoryCard } from "@/components/import-history-card";
+import { getAllProjectNames } from "@/app/proyectos/actions";
+import { getImportBatches } from "./actions";
 
 export default async function ImportarPage() {
-  const [allAccounts, allCategories, allPayees] = await Promise.all([
+  const [allAccounts, allCategories, allPayees, projectNames, batches] = await Promise.all([
     db.select().from(accounts).orderBy(asc(accounts.name)),
     db.select().from(categories).orderBy(asc(categories.name)),
     db.select().from(payees).orderBy(asc(payees.name)),
+    getAllProjectNames(),
+    getImportBatches(),
   ]);
 
   return (
@@ -22,7 +27,14 @@ export default async function ImportarPage() {
         </p>
       </div>
 
-      <ImportWizard accounts={allAccounts} categories={allCategories} payees={allPayees} />
+      <ImportWizard
+        accounts={allAccounts}
+        categories={allCategories}
+        payees={allPayees}
+        projectNames={projectNames}
+      />
+
+      <ImportHistoryCard batches={batches} />
     </div>
   );
 }

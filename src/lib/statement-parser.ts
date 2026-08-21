@@ -253,8 +253,9 @@ const NU_YEAR_CONTINUATION_RE = /^\d{4}$/;
 const NU_REFUND_RE = /^devoluci/i;
 // Not anchored on the full "...pago" — that word sometimes wraps onto its
 // own continuation line (like long descriptions do), leaving cells[1] as
-// just "Gracias por tu" for this row.
-const NU_PAYMENT_RE = /^gracias por tu/i;
+// just "Gracias por tu" for this row. Some statements print this row as a
+// bare "Pago" instead of the full "Gracias por tu pago" phrasing.
+const NU_PAYMENT_RE = /^(gracias por tu|pago)\b/i;
 
 const NU_MONTH_ABBR: Record<string, number> = {
   ENE: 1,
@@ -285,9 +286,10 @@ const NU_MONTH_ABBR: Record<string, number> = {
  * Row detection is token-based rather than positional: a row only counts as
  * a purchase if one of its cells matches "N de M" (Cuotas). Rows without a
  * Cuotas column are one of two known things, distinguished by description
- * text: a payment confirmation ("Gracias por tu pago" — already captured as
- * a transfer from whichever account paid the bill, so skipped here) or a
- * merchant refund ("Devolución - ..." — genuinely new information, recorded
+ * text: a payment confirmation ("Gracias por tu pago", or just "Pago" in
+ * some statements — already captured as a transfer from whichever account
+ * paid the bill, so skipped here) or a merchant refund ("Devolución - ..." —
+ * genuinely new information, recorded
  * as income since nothing else in the app would otherwise account for it). A
  * row-anchored line matching neither shape is reported via `unrecognized`
  * instead of silently dropped, since that's exactly how the refund case

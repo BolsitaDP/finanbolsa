@@ -5,7 +5,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
-import { PlusIcon, XIcon } from "lucide-react";
+import { PlusIcon, WandSparklesIcon, XIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -29,9 +29,11 @@ import { Combobox } from "@/components/ui/combobox";
 import { CategorySelect } from "@/components/category-select";
 
 import { createTransaction, updateTransaction, type SplitInput } from "@/app/transacciones/actions";
-import { CURRENCIES, TRANSACTION_TYPES } from "@/lib/enums";
+import { CreateRuleFromTransactionDialog } from "@/components/create-rule-from-transaction-dialog";
+import { CURRENCIES, TRANSACTION_TYPES, TRANSACTION_TYPE_LABELS } from "@/lib/enums";
 import { toDateTimeInputValue } from "@/lib/date-input";
 import { formatMoney } from "@/lib/format";
+import { projectTripItems } from "@/lib/project-options";
 
 const schema = z.object({
   date: z.string().min(1, "Requerido"),
@@ -105,6 +107,7 @@ export function TransactionFormDialog({
   accounts,
   categories,
   payees,
+  projectNames,
   transaction,
   splits = [],
   trigger,
@@ -112,12 +115,14 @@ export function TransactionFormDialog({
   accounts: Account[];
   categories: Category[];
   payees: Payee[];
+  projectNames: string[];
   transaction?: Transaction;
   splits?: ExistingSplit[];
   trigger: React.ReactElement;
 }) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const [ruleDialogOpen, setRuleDialogOpen] = useState(false);
   const [splitRows, setSplitRows] = useState<SplitRow[]>(() => splitRowsFromExisting(splits));
 
   const form = useForm<FormValues>({
@@ -135,7 +140,7 @@ export function TransactionFormDialog({
       categoryId: transaction?.categoryId ?? "none",
       payeeId: transaction?.payeeId ?? "none",
       description: transaction?.description ?? "",
-      projectTrip: transaction?.projectTrip ?? "",
+      projectTrip: transaction?.projectTrip ?? "none",
       notes: transaction?.notes ?? "",
     },
   });
@@ -144,8 +149,12 @@ export function TransactionFormDialog({
   const accountId = form.watch("accountId");
   const amountMinorStr = form.watch("amountMinor");
   const currency = form.watch("currency");
+  const description = form.watch("description");
+  const categoryId = form.watch("categoryId");
+  const payeeId = form.watch("payeeId");
   const isTransfer = type === "transfer";
   const showSplits = !isTransfer && type === "expense";
+  const canCreateRule = Boolean(description.trim()) && (categoryId !== "none" || payeeId !== "none");
 
   const splitTotal = splitRows.reduce((s, r) => s + (Number(r.amountMinor) || 0), 0);
   const remainder = (Number(amountMinorStr) || 0) - splitTotal;
@@ -202,7 +211,7 @@ export function TransactionFormDialog({
           categoryId: values.type !== "transfer" && values.categoryId !== "none" ? values.categoryId : null,
           payeeId: values.type !== "transfer" && values.payeeId !== "none" ? values.payeeId : null,
           description: values.description || null,
-          projectTrip: values.projectTrip || null,
+          projectTrip: values.projectTrip !== "none" ? values.projectTrip : null,
           notes: values.notes || null,
         };
         // Only expense transactions can carry a breakdown — if the type got
@@ -237,7 +246,7 @@ export function TransactionFormDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger render={trigger} />
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-xl">
         <DialogHeader>
           <DialogTitle>{transaction ? "Editar transacción" : "Nueva transacción"}</DialogTitle>
         </DialogHeader>
@@ -254,7 +263,7 @@ export function TransactionFormDialog({
                       <Combobox
                         value={field.value}
                         onValueChange={field.onChange}
-                        items={Object.fromEntries(TRANSACTION_TYPES.map((t) => [t, t]))}
+                        items={Object.fromEntries(TRANSACTION_TYPES.map((t) => [t, TRANSACTION_TYPE_LABELS[t]]))}
                         className="w-full"
                       />
                     </FormControl>
@@ -455,6 +464,41 @@ export function TransactionFormDialog({
               )}
             />
 
+            <div className="grid grid-cols-2 gap-3">
+              <FormField
+                control={form.control}
+                name="projectTrip"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Proyecto / Viaje</FormLabel>
+                    <FormControl>
+                      <Combobox
+                        value={field.value}
+                        onValueChange={field.onChange}
+                        items={projectTripItems(projectNames, transaction?.projectTrip)}
+                        placeholder="Ninguno"
+                        className="w-full"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="notes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Notas</FormLabel>
+                    <FormControl>
+                      <Input {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
             {showSplits && (
               <div className="flex flex-col gap-2 rounded-lg border p-3">
                 <div className="flex items-center justify-between">
@@ -530,36 +574,18 @@ export function TransactionFormDialog({
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-3">
-              <FormField
-                control={form.control}
-                name="projectTrip"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Proyecto / Viaje</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Opcional" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="notes"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Notas</FormLabel>
-                    <FormControl>
-                      <Input {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
-
-            <DialogFooter>
+            <DialogFooter className={transaction ? "sm:justify-between" : undefined}>
+              {transaction && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!canCreateRule}
+                  onClick={() => setRuleDialogOpen(true)}
+                >
+                  <WandSparklesIcon /> Crear regla
+                </Button>
+              )}
               <Button type="submit" disabled={isPending}>
                 {transaction ? "Guardar cambios" : "Crear transacción"}
               </Button>
@@ -567,6 +593,17 @@ export function TransactionFormDialog({
           </form>
         </Form>
       </DialogContent>
+
+      {ruleDialogOpen && (
+        <CreateRuleFromTransactionDialog
+          onOpenChange={setRuleDialogOpen}
+          description={description}
+          categoryId={categoryId}
+          payeeId={payeeId}
+          categories={categories}
+          payees={payees}
+        />
+      )}
     </Dialog>
   );
 }

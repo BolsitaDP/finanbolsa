@@ -10,6 +10,12 @@ export type AccountStatus = (typeof ACCOUNT_STATUSES)[number];
 export const TRANSACTION_TYPES = ["expense", "income", "transfer"] as const;
 export type TransactionType = (typeof TRANSACTION_TYPES)[number];
 
+export const TRANSACTION_TYPE_LABELS: Record<TransactionType, string> = {
+  expense: "Gasto",
+  income: "Ingreso",
+  transfer: "Transferencia",
+};
+
 export const CATEGORY_KINDS = ["expense", "income"] as const;
 export type CategoryKind = (typeof CATEGORY_KINDS)[number];
 

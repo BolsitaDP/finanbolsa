@@ -7,6 +7,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { SettingsForm } from "@/components/settings-form";
 import { DangerZone } from "@/components/danger-zone";
+import { ImportHistoryCard } from "@/components/import-history-card";
+import { getImportBatches } from "@/app/importar/actions";
 import {
   resetAccounts,
   resetAllExceptAccounts,
@@ -18,15 +20,17 @@ import {
 } from "./actions";
 
 export default async function ConfiguracionPage() {
-  const [s, txCount, catCount, payeeCount, ruleCount, budgetCount, accountCount] = await Promise.all([
-    db.select().from(settings).where(eq(settings.id, "default")).then((r) => r[0]),
-    db.select({ id: transactions.id }).from(transactions).then((r) => r.length),
-    db.select({ id: categories.id }).from(categories).then((r) => r.length),
-    db.select({ id: payees.id }).from(payees).then((r) => r.length),
-    db.select({ id: rules.id }).from(rules).then((r) => r.length),
-    db.select({ id: budgets.id }).from(budgets).then((r) => r.length),
-    db.select({ id: accounts.id }).from(accounts).then((r) => r.length),
-  ]);
+  const [s, txCount, catCount, payeeCount, ruleCount, budgetCount, accountCount, importBatches] =
+    await Promise.all([
+      db.select().from(settings).where(eq(settings.id, "default")).then((r) => r[0]),
+      db.select({ id: transactions.id }).from(transactions).then((r) => r.length),
+      db.select({ id: categories.id }).from(categories).then((r) => r.length),
+      db.select({ id: payees.id }).from(payees).then((r) => r.length),
+      db.select({ id: rules.id }).from(rules).then((r) => r.length),
+      db.select({ id: budgets.id }).from(budgets).then((r) => r.length),
+      db.select({ id: accounts.id }).from(accounts).then((r) => r.length),
+      getImportBatches(),
+    ]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -72,6 +76,11 @@ export default async function ConfiguracionPage() {
           </Button>
         </CardContent>
       </Card>
+
+      <ImportHistoryCard
+        batches={importBatches}
+        emptyMessage="Aún no has importado ningún extracto — el historial aparecerá aquí después de tu primera importación."
+      />
 
       <Card className="max-w-md border-destructive/30">
         <CardHeader>

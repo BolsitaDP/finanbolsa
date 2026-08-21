@@ -46,12 +46,14 @@ export function CategoriasTable({
             {row.original.parentCategoryId ? `↳ ${row.original.name}` : row.original.name}
           </span>
         ),
+        meta: { label: "Nombre" },
       },
       {
         id: "parent",
         accessorFn: (c) => (c.parentCategoryId ? (nameById.get(c.parentCategoryId) ?? "") : ""),
         header: ({ column }) => <DataTableColumnHeader column={column} title="Categoría padre" />,
         cell: ({ getValue }) => (getValue<string>() ? getValue<string>() : "—"),
+        meta: { label: "Categoría padre" },
       },
       {
         accessorKey: "kind",
@@ -61,15 +63,18 @@ export function CategoriasTable({
             {row.original.kind}
           </Badge>
         ),
+        meta: { label: "Tipo" },
       },
       {
         accessorKey: "status",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Estado" />,
+        meta: { label: "Estado" },
       },
       {
         id: "actions",
         header: "",
         enableSorting: false,
+        enableHiding: false,
         cell: ({ row }) => (
           <div className="flex justify-end gap-1">
             <CategoryFormDialog
@@ -101,6 +106,7 @@ export function CategoriasTable({
       pageSize={50}
       getRowId={(row) => row.id}
       emptyMessage="No hay categorías que coincidan."
+      storageKey="categorias"
       bulkToolbar={(selected, clear) => {
         const ids = selected.map((c) => c.id);
         return (

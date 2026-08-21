@@ -7,6 +7,7 @@ import {
   type RowSelectionState,
   type SortingState,
   type Table as TanstackTable,
+  type VisibilityState,
   flexRender,
   getCoreRowModel,
   getFilteredRowModel,
@@ -25,6 +26,23 @@ import {
 } from "@/components/ui/table";
 import { DataTablePagination } from "./pagination";
 import { createSelectionColumn } from "./selection-column";
+import { ColumnVisibilityMenu } from "./column-visibility-menu";
+
+declare module "@tanstack/react-table" {
+  // The generic params must match the augmented interface's signature even
+  // though this extension doesn't reference them.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  interface ColumnMeta<TData, TValue> {
+    // Friendly name shown in the column-visibility toggle — falls back to
+    // the column id when omitted (fine for columns that don't need one,
+    // like "actions", which is excluded from the list via enableHiding).
+    label?: string;
+  }
+}
+
+function columnVisibilityStorageKey(storageKey: string) {
+  return `finanbolsa:columns:${storageKey}`;
+}
 
 export function DataTable<TData, TValue>({
   columns,
@@ -35,6 +53,7 @@ export function DataTable<TData, TValue>({
   pageSize = 15,
   emptyMessage = "Sin resultados.",
   initialSorting,
+  storageKey,
 }: {
   columns: ColumnDef<TData, TValue>[];
   data: TData[];
@@ -44,11 +63,40 @@ export function DataTable<TData, TValue>({
   pageSize?: number;
   emptyMessage?: string;
   initialSorting?: SortingState;
+  // Enables the column-visibility toggle and, keyed by this string, persists
+  // the chosen columns to localStorage so they survive a page reload. Pass a
+  // name unique per table (e.g. "transacciones").
+  storageKey?: string;
 }) {
   const [sorting, setSorting] = React.useState<SortingState>(initialSorting ?? []);
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([]);
   const [globalFilter, setGlobalFilter] = React.useState("");
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
+  const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({});
+  // Guards against writing back the default {} state before the persisted
+  // value (loaded async-ish, on mount) has had a chance to apply — without
+  // this, that first write would immediately clobber whatever was saved.
+  const [visibilityLoaded, setVisibilityLoaded] = React.useState(!storageKey);
+
+  React.useEffect(() => {
+    if (!storageKey) return;
+    try {
+      const raw = localStorage.getItem(columnVisibilityStorageKey(storageKey));
+      if (raw) setColumnVisibility(JSON.parse(raw));
+    } catch {
+      // Ignore malformed/inaccessible storage — falls back to all columns visible.
+    }
+    setVisibilityLoaded(true);
+  }, [storageKey]);
+
+  React.useEffect(() => {
+    if (!storageKey || !visibilityLoaded) return;
+    try {
+      localStorage.setItem(columnVisibilityStorageKey(storageKey), JSON.stringify(columnVisibility));
+    } catch {
+      // Ignore write failures (e.g. storage quota, private browsing).
+    }
+  }, [storageKey, visibilityLoaded, columnVisibility]);
 
   const allColumns = React.useMemo(() => {
     if (!bulkToolbar) return columns;
@@ -58,11 +106,12 @@ export function DataTable<TData, TValue>({
   const table = useReactTable({
     data,
     columns: allColumns,
-    state: { sorting, columnFilters, globalFilter, rowSelection },
+    state: { sorting, columnFilters, globalFilter, rowSelection, columnVisibility },
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
     onGlobalFilterChange: setGlobalFilter,
     onRowSelectionChange: setRowSelection,
+    onColumnVisibilityChange: setColumnVisibility,
     getRowId,
     enableRowSelection: !!bulkToolbar,
     getCoreRowModel: getCoreRowModel(),
@@ -84,10 +133,24 @@ export function DataTable<TData, TValue>({
 
   return (
     <div className="flex flex-col gap-3">
-      {selectedRows.length > 0 && bulkToolbar
-        ? bulkToolbar(selectedRows, clearSelection)
-        : toolbar?.(table)}
-      <div className="overflow-x-auto rounded-lg border">
+      {/* Fixed floor matching the taller of the two states below (the
+          bordered/padded bulk actions bar) so selecting/deselecting rows
+          doesn't shift the table underneath. Grid (not flex) so the first
+          column still stretches to the full available width like it did
+          before this wrapper existed — a flex row would shrink it to
+          content width and break the toolbar's own wrapping behavior. */}
+      <div className="grid grid-cols-[1fr_auto] items-center gap-2 min-h-[46px]">
+        <div className="min-w-0">
+          {selectedRows.length > 0 && bulkToolbar
+            ? bulkToolbar(selectedRows, clearSelection)
+            : toolbar?.(table)}
+        </div>
+        <ColumnVisibilityMenu table={table} />
+      </div>
+      {/* A light single border here (not the heavier ring the surrounding Card
+          already uses) — these tables are always inside a Card, so matching
+          that same ring treatment would read as a card nested in a card. */}
+      <div className="overflow-x-auto rounded-lg border border-border/60">
         <Table>
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (

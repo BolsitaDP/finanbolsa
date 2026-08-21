@@ -3,18 +3,13 @@
 import { useState } from "react";
 
 import { BulkEditDialog } from "@/components/data-table/bulk-edit-dialog";
-import { BulkEditCategoryField, BulkEditSelectField, BulkEditTextField } from "@/components/data-table/bulk-edit-field";
-import { TRANSACTION_TYPES, type TransactionType } from "@/lib/enums";
+import { BulkEditCategoryField, BulkEditSelectField } from "@/components/data-table/bulk-edit-field";
+import { TRANSACTION_TYPES, TRANSACTION_TYPE_LABELS, type TransactionType } from "@/lib/enums";
+import { projectTripItems } from "@/lib/project-options";
 
 type Account = { id: string; name: string };
 type Category = { id: string; name: string; kind: string; parentCategoryId: string | null };
 type Payee = { id: string; name: string };
-
-const TYPE_LABELS: Record<TransactionType, string> = {
-  expense: "Gasto",
-  income: "Ingreso",
-  transfer: "Transferencia",
-};
 
 // Mirrors EditableGroup's own field names in import-wizard.tsx so patches
 // can be applied with a plain spread — no server round-trip, this only ever
@@ -35,6 +30,7 @@ export function ImportBulkEditDialog({
   accounts,
   categories,
   payees,
+  projectNames,
   onApply,
   trigger,
 }: {
@@ -43,6 +39,7 @@ export function ImportBulkEditDialog({
   accounts: Account[];
   categories: Category[];
   payees: Payee[];
+  projectNames: string[];
   onApply: (patch: ImportGroupPatch) => void;
   trigger: React.ReactElement;
 }) {
@@ -55,7 +52,7 @@ export function ImportBulkEditDialog({
   const [destinationEnabled, setDestinationEnabled] = useState(false);
   const [destinationAccountId, setDestinationAccountId] = useState("");
   const [projectEnabled, setProjectEnabled] = useState(false);
-  const [projectTrip, setProjectTrip] = useState("");
+  const [projectTrip, setProjectTrip] = useState("none");
   const [createRuleEnabled, setCreateRuleEnabled] = useState(false);
   const [createRuleValue, setCreateRuleValue] = useState("");
   const [skipEnabled, setSkipEnabled] = useState(false);
@@ -75,61 +72,70 @@ export function ImportBulkEditDialog({
 
   return (
     <BulkEditDialog trigger={trigger} title="Editar seleccionados" count={count} onApply={handleApply}>
-      <BulkEditSelectField
-        label="Tipo"
-        enabled={typeEnabled}
-        onEnabledChange={setTypeEnabled}
-        value={type}
-        onValueChange={setType}
-        items={Object.fromEntries(TRANSACTION_TYPES.map((t) => [t, TYPE_LABELS[t]]))}
-        placeholder="Selecciona..."
-      />
-      <BulkEditCategoryField
-        label="Categoría"
-        enabled={categoryEnabled}
-        onEnabledChange={setCategoryEnabled}
-        value={categoryId}
-        onValueChange={setCategoryId}
-        categories={categories}
-      />
-      <BulkEditSelectField
-        label="Payee"
-        enabled={payeeEnabled}
-        onEnabledChange={setPayeeEnabled}
-        value={payeeId}
-        onValueChange={setPayeeId}
-        items={{ none: "Sin payee", ...Object.fromEntries(payees.map((p) => [p.id, p.name])) }}
-        placeholder="Selecciona..."
-      />
-      <BulkEditSelectField
-        label="Cuenta destino (transferencias)"
-        enabled={destinationEnabled}
-        onEnabledChange={setDestinationEnabled}
-        value={destinationAccountId}
-        onValueChange={setDestinationAccountId}
-        items={{
-          none: "Sin especificar",
-          ...Object.fromEntries(accounts.filter((a) => a.id !== accountId).map((a) => [a.id, a.name])),
-        }}
-        placeholder="Selecciona..."
-      />
-      <BulkEditTextField
-        label="Proyecto / Viaje"
-        enabled={projectEnabled}
-        onEnabledChange={setProjectEnabled}
-        value={projectTrip}
-        onValueChange={setProjectTrip}
-        placeholder="Ej. Europa"
-      />
-      <BulkEditSelectField
-        label="Crear regla"
-        enabled={createRuleEnabled}
-        onEnabledChange={setCreateRuleEnabled}
-        value={createRuleValue}
-        onValueChange={setCreateRuleValue}
-        items={{ true: "Sí", false: "No" }}
-        placeholder="Selecciona..."
-      />
+      <div className="grid grid-cols-2 gap-3">
+        <BulkEditSelectField
+          label="Tipo"
+          enabled={typeEnabled}
+          onEnabledChange={setTypeEnabled}
+          value={type}
+          onValueChange={setType}
+          items={Object.fromEntries(TRANSACTION_TYPES.map((t) => [t, TRANSACTION_TYPE_LABELS[t]]))}
+          placeholder="Selecciona..."
+        />
+        <BulkEditCategoryField
+          label="Categoría"
+          enabled={categoryEnabled}
+          onEnabledChange={setCategoryEnabled}
+          value={categoryId}
+          onValueChange={setCategoryId}
+          categories={categories}
+        />
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <BulkEditSelectField
+          label="Payee"
+          enabled={payeeEnabled}
+          onEnabledChange={setPayeeEnabled}
+          value={payeeId}
+          onValueChange={setPayeeId}
+          items={{ none: "Sin payee", ...Object.fromEntries(payees.map((p) => [p.id, p.name])) }}
+          placeholder="Selecciona..."
+        />
+        <BulkEditSelectField
+          label="Cuenta destino (transferencias)"
+          enabled={destinationEnabled}
+          onEnabledChange={setDestinationEnabled}
+          value={destinationAccountId}
+          onValueChange={setDestinationAccountId}
+          items={{
+            none: "Sin especificar",
+            ...Object.fromEntries(accounts.filter((a) => a.id !== accountId).map((a) => [a.id, a.name])),
+          }}
+          placeholder="Selecciona..."
+        />
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <BulkEditSelectField
+          label="Proyecto / Viaje"
+          enabled={projectEnabled}
+          onEnabledChange={setProjectEnabled}
+          value={projectTrip}
+          onValueChange={setProjectTrip}
+          items={projectTripItems(projectNames)}
+        />
+        <BulkEditSelectField
+          label="Crear regla"
+          enabled={createRuleEnabled}
+          onEnabledChange={setCreateRuleEnabled}
+          value={createRuleValue}
+          onValueChange={setCreateRuleValue}
+          items={{ true: "Sí", false: "No" }}
+          placeholder="Selecciona..."
+        />
+      </div>
+
       <BulkEditSelectField
         label="Omitir de la importación"
         enabled={skipEnabled}

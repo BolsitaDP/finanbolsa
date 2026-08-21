@@ -45,6 +45,24 @@ export const payees = sqliteTable("payees", {
   notes: text("notes"),
 });
 
+// --- import batches -----------------------------------------------------------
+// One row per completed "Importar N transacciones" click — lets a whole
+// statement import be found and undone as a unit (see importBatchId below)
+// instead of hunting down individual rows by hand when something was
+// miscategorized at scale or imported twice.
+export const importBatches = sqliteTable("import_batches", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  accountId: text("account_id")
+    .notNull()
+    .references(() => accounts.id),
+  fileName: text("file_name").notNull(),
+  transactionCount: integer("transaction_count").notNull(),
+  skippedDuplicates: integer("skipped_duplicates").notNull().default(0),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
 // --- transactions -----------------------------------------------------------
 // type: expense | income | transfer
 export const transactions = sqliteTable("transactions", {
@@ -64,6 +82,9 @@ export const transactions = sqliteTable("transactions", {
   description: text("description"),
   projectTrip: text("project_trip"),
   notes: text("notes"),
+  // Null for manually-entered transactions and anything imported before this
+  // feature existed — only rows created by one import run carry a batch.
+  importBatchId: integer("import_batch_id").references(() => importBatches.id),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .default(sql`(unixepoch())`),
@@ -130,6 +151,24 @@ export const budgets = sqliteTable(
   },
   (t) => [uniqueIndex("budgets_category_month_idx").on(t.categoryId, t.month)]
 );
+
+// --- projects/trips -----------------------------------------------------------
+export const projects = sqliteTable("projects", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  type: text("type").notNull().default("project"), // project | trip
+  color: text("color"),
+  startDate: integer("start_date", { mode: "timestamp" }),
+  endDate: integer("end_date", { mode: "timestamp" }),
+  notes: text("notes"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  archivedAt: integer("archived_at", { mode: "timestamp" }),
+});
 
 // --- settings -----------------------------------------------------------
 // Single-row table: app-wide settings. Fixed lookup catalogs (account types,

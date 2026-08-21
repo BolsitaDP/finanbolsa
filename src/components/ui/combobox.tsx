@@ -68,15 +68,19 @@ export function Combobox({
       <ComboboxPrimitive.Portal>
         <ComboboxPrimitive.Positioner className="isolate z-50 outline-none" sideOffset={4}>
           <ComboboxPrimitive.Popup className="z-50 max-h-(--available-height) w-(--anchor-width) min-w-48 origin-(--transform-origin) overflow-hidden rounded-lg bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10 outline-none">
-            <div className="p-1">
+            <div className="px-1 pt-1 pb-0">
               <ComboboxPrimitive.Input
                 placeholder={searchPlaceholder}
                 className="h-7 w-full rounded-md border border-input bg-transparent px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
               />
             </div>
             <Separator />
-            <ComboboxPrimitive.Empty className="px-2 py-4 text-center text-sm text-muted-foreground">
-              {emptyLabel}
+            {/* base-ui keeps this element mounted at all times (for a11y announcements)
+                and only fills its children when the list is actually empty — so the
+                padding has to live on an inner child, not here, or it'd show as blank
+                space even while results are visible. */}
+            <ComboboxPrimitive.Empty>
+              <div className="px-2 py-4 text-center text-sm text-muted-foreground">{emptyLabel}</div>
             </ComboboxPrimitive.Empty>
             <ComboboxPrimitive.List className="max-h-64 overflow-y-auto p-1">
               {(item: Option) => (

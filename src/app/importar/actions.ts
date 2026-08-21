@@ -1,11 +1,11 @@
 "use server";
 
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, gte, isNull, lte } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lte } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
 import { db } from "@/db";
-import { accounts, categories, payees, rules, transactions } from "@/db/schema";
+import { accounts, categories, importBatches, payees, rules, transactions, transactionSplits } from "@/db/schema";
 import { parseBancolombiaStatement, parseNuStatement, parseRappicardStatement } from "@/lib/statement-parser";
 import { cleanMerchantName } from "@/lib/merchant";
 import { ruleMatches } from "@/lib/rules";
@@ -154,7 +154,8 @@ export async function parseStatement(accountId: string, formData: FormData) {
 export async function bulkImportTransactions(
   accountId: string,
   currency: Currency,
-  groups: ImportGroupInput[]
+  groups: ImportGroupInput[],
+  fileName: string
 ) {
   // These IDs were captured in the browser when the import page loaded, and
   // can go stale if the underlying data was reset (e.g. via the danger zone)
@@ -164,7 +165,7 @@ export async function bulkImportTransactions(
     db.select({ id: accounts.id }).from(accounts),
     db.select({ id: categories.id }).from(categories),
     db.select().from(payees),
-    db.select({ conditions: rules.conditions }).from(rules),
+    db.select({ id: rules.id, conditions: rules.conditions }).from(rules),
   ]);
   const validAccountIds = new Set(validAccounts.map((a) => a.id));
   const validCategoryIds = new Set(validCategories.map((c) => c.id));
@@ -177,7 +178,13 @@ export async function bulkImportTransactions(
   }
 
   const payeeByName = new Map(existingPayees.map((p) => [p.name.toLowerCase(), p]));
-  const ruleSignatures = new Set(existingRulesRaw.map((r) => JSON.stringify(r.conditions)));
+  // Keyed by the same JSON.stringify(conditions) signature a fresh rule
+  // would get, so a re-import of the same merchant reaffirms the existing
+  // rule (see below) instead of silently no-op'ing — which used to make
+  // checking "Crear regla" look like it did nothing whenever a rule for
+  // that merchant already existed (e.g. disabled after its category was
+  // deleted, or just created on an earlier import of the same statement).
+  const ruleIdBySignature = new Map(existingRulesRaw.map((r) => [JSON.stringify(r.conditions), r.id]));
 
   // Same budget-based dedup as the preview in parseStatement: fetched once
   // up front rather than re-queried per row, so a batch that legitimately
@@ -201,6 +208,7 @@ export async function bulkImportTransactions(
   let imported = 0;
   let skippedDuplicates = 0;
   let rulesCreated = 0;
+  const insertedIds: number[] = [];
 
   for (const rawGroup of groups) {
     if (rawGroup.skip) continue;
@@ -256,35 +264,61 @@ export async function bulkImportTransactions(
       }
 
       const date = new Date(tx.date);
-      await db.insert(transactions).values({
-        date,
-        type: group.type,
-        accountId,
-        destinationAccountId: group.destinationAccountId,
-        amountMinor: Math.abs(tx.amountMinor),
-        currency,
-        categoryId: group.categoryId,
-        payeeId,
-        description: tx.description,
-        projectTrip: group.projectTrip,
-        notes: "Importado de extracto",
-      });
+      const [inserted] = await db
+        .insert(transactions)
+        .values({
+          date,
+          type: group.type,
+          accountId,
+          destinationAccountId: group.destinationAccountId,
+          amountMinor: Math.abs(tx.amountMinor),
+          currency,
+          categoryId: group.categoryId,
+          payeeId,
+          description: tx.description,
+          projectTrip: group.projectTrip,
+          notes: "Importado de extracto",
+        })
+        .returning({ id: transactions.id });
+      insertedIds.push(inserted.id);
       imported++;
     }
 
     if (group.createRule && group.categoryId) {
       const conditions = [{ field: "description" as const, op: "contains" as const, value: group.merchantLabel }];
       const signature = JSON.stringify(conditions);
-      if (!ruleSignatures.has(signature)) {
-        const actions = [
-          { field: "categoryId" as const, value: group.categoryId },
-          ...(payeeId ? [{ field: "payeeId" as const, value: payeeId }] : []),
-        ];
-        await db.insert(rules).values({ name: group.merchantLabel, conditions, actions, sortOrder: 999 });
-        ruleSignatures.add(signature);
-        rulesCreated++;
+      const actions = [
+        { field: "categoryId" as const, value: group.categoryId },
+        ...(payeeId ? [{ field: "payeeId" as const, value: payeeId }] : []),
+      ];
+      const existingRuleId = ruleIdBySignature.get(signature);
+      if (existingRuleId) {
+        // A rule already matches this exact merchant text — reaffirm it
+        // with the category/payee just picked (and re-enable it, in case it
+        // had been disabled) rather than leaving it untouched.
+        await db.update(rules).set({ actions, enabled: true }).where(eq(rules.id, existingRuleId));
+      } else {
+        const [inserted] = await db
+          .insert(rules)
+          .values({ name: group.merchantLabel, conditions, actions, sortOrder: 999 })
+          .returning({ id: rules.id });
+        ruleIdBySignature.set(signature, inserted.id);
       }
+      rulesCreated++;
     }
+  }
+
+  // Group this run's inserted rows under one batch so it can be reviewed or
+  // undone as a whole later, instead of hunting individual rows by hand.
+  if (insertedIds.length > 0) {
+    const [batch] = await db
+      .insert(importBatches)
+      .values({ accountId, fileName, transactionCount: insertedIds.length, skippedDuplicates })
+      .returning({ id: importBatches.id });
+    await db
+      .update(transactions)
+      .set({ importBatchId: batch.id })
+      .where(inArray(transactions.id, insertedIds));
   }
 
   revalidatePath("/transacciones");
@@ -293,6 +327,48 @@ export async function bulkImportTransactions(
   revalidatePath("/cuentas");
   revalidatePath("/");
   revalidatePath("/presupuesto");
+  revalidatePath("/importar");
 
   return { imported, skippedDuplicates, rulesCreated };
+}
+
+export async function getImportBatches() {
+  const [batches, allAccounts] = await Promise.all([
+    db.select().from(importBatches).orderBy(desc(importBatches.createdAt)),
+    db.select({ id: accounts.id, name: accounts.name }).from(accounts),
+  ]);
+  const accountName = new Map(allAccounts.map((a) => [a.id, a.name]));
+  return batches.map((b) => ({ ...b, accountName: accountName.get(b.accountId) ?? b.accountId }));
+}
+
+export async function deleteImportBatch(id: number) {
+  // Soft-delete, same as removing a transaction one at a time — matches
+  // bulkSoftDeleteTransactions' convention instead of a hard DELETE. The
+  // batch record itself is removed outright: once its rows are gone there's
+  // nothing left to undo, so keeping a "deleted batch" entry around would
+  // just be clutter in the history list.
+  const batchTx = await db
+    .select({ id: transactions.id })
+    .from(transactions)
+    .where(eq(transactions.importBatchId, id));
+  const batchTxIds = batchTx.map((t) => t.id);
+  if (batchTxIds.length > 0) {
+    // The transaction rows stay (soft-deleted, not hard-deleted) but must
+    // stop pointing at this batch first — otherwise deleting the batch row
+    // below trips the foreign key, since a soft delete doesn't clear it.
+    await db
+      .update(transactions)
+      .set({ deletedAt: new Date(), importBatchId: null })
+      .where(inArray(transactions.id, batchTxIds));
+    await db.delete(transactionSplits).where(inArray(transactionSplits.transactionId, batchTxIds));
+  }
+  await db.delete(importBatches).where(eq(importBatches.id, id));
+
+  revalidatePath("/transacciones");
+  revalidatePath("/payees");
+  revalidatePath("/reglas");
+  revalidatePath("/cuentas");
+  revalidatePath("/");
+  revalidatePath("/presupuesto");
+  revalidatePath("/importar");
 }

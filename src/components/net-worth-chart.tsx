@@ -38,7 +38,15 @@ export function NetWorthChart({ data, currency, color }: { data: NetWorthPoint[]
           />
           <Tooltip
             formatter={(value) => formatMoney(Number(value), currency)}
-            contentStyle={{ fontSize: 12, borderRadius: 8 }}
+            contentStyle={{
+              fontSize: 12,
+              borderRadius: 10,
+              background: "var(--popover)",
+              borderColor: "var(--border)",
+              color: "var(--popover-foreground)",
+              boxShadow: "0 4px 16px oklch(0 0 0 / 0.08)",
+            }}
+            labelStyle={{ color: "var(--muted-foreground)" }}
           />
           <Line type="monotone" dataKey="value" stroke={color} strokeWidth={2} dot={{ r: 3 }} />
         </LineChart>

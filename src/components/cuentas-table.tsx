@@ -46,15 +46,18 @@ export function CuentasTable({
         accessorKey: "name",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Nombre" />,
         cell: ({ row }) => <span className="font-medium">{row.original.name}</span>,
+        meta: { label: "Nombre" },
       },
       {
         accessorKey: "type",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Tipo" />,
         cell: ({ row }) => <span className="capitalize">{row.original.type.replace("_", " ")}</span>,
+        meta: { label: "Tipo" },
       },
       {
         accessorKey: "currency",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Moneda" />,
+        meta: { label: "Moneda" },
       },
       {
         accessorKey: "status",
@@ -64,12 +67,14 @@ export function CuentasTable({
             {row.original.status}
           </Badge>
         ),
+        meta: { label: "Estado" },
       },
       {
         accessorKey: "referenceDate",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Fecha ref." />,
         cell: ({ row }) =>
           row.original.referenceDate ? formatDate(row.original.referenceDate) : "—",
+        meta: { label: "Fecha ref." },
       },
       {
         accessorKey: "referenceBalanceMinor",
@@ -81,6 +86,7 @@ export function CuentasTable({
             {formatMoney(row.original.referenceBalanceMinor, row.original.currency)}
           </div>
         ),
+        meta: { label: "Saldo ref." },
       },
       {
         id: "currentBalance",
@@ -93,6 +99,7 @@ export function CuentasTable({
             {formatMoney(balances[row.original.id] ?? row.original.referenceBalanceMinor, row.original.currency)}
           </div>
         ),
+        meta: { label: "Saldo actual" },
       },
       {
         accessorKey: "creditLimitMinor",
@@ -106,11 +113,13 @@ export function CuentasTable({
               : "—"}
           </div>
         ),
+        meta: { label: "Cupo" },
       },
       {
         id: "actions",
         header: "",
         enableSorting: false,
+        enableHiding: false,
         cell: ({ row }) => (
           <div className="flex justify-end gap-1">
             <AccountFormDialog
@@ -142,6 +151,7 @@ export function CuentasTable({
       pageSize={50}
       getRowId={(row) => row.id}
       emptyMessage="No hay cuentas que coincidan."
+      storageKey="cuentas"
       bulkToolbar={(selected, clear) => {
         const ids = selected.map((a) => a.id);
         return (
