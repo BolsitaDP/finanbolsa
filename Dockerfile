@@ -23,7 +23,6 @@ RUN npm run build
 
 FROM base AS runner
 ENV NODE_ENV=production
-RUN groupadd --system --gid 1001 nodejs && useradd --system --uid 1001 --gid nodejs nextjs
 
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/.next ./.next
@@ -34,10 +33,12 @@ COPY --from=builder /app/drizzle.config.ts ./drizzle.config.ts
 COPY --from=builder /app/src ./src
 COPY --from=builder /app/next.config.ts ./next.config.ts
 
-# The SQLite file lives on a mounted volume (see docker-compose.yml), owned
-# by the app user so it can create/write the .db file there on first run.
-RUN mkdir -p /app/data && chown -R nextjs:nodejs /app
-USER nextjs
+# Runs as root (default) rather than a dedicated non-root user: the SQLite
+# file lives on a host-mounted volume (see docker-compose.yml), and matching
+# a non-root container user's UID to whatever owns that folder on the Pi's
+# filesystem is a permissions headache with no real payoff for a single
+# personal container on a LAN. src/db/index.ts creates the directory itself
+# if it's missing either way.
 
 EXPOSE 3000
 ENV PORT=3000
