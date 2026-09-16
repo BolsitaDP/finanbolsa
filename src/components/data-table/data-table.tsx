@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/table";
 import { DataTablePagination } from "./pagination";
 import { createSelectionColumn } from "./selection-column";
-import { ColumnVisibilityMenu } from "./column-visibility-menu";
+import { DataTableSettings } from "./column-visibility-menu";
 
 declare module "@tanstack/react-table" {
   // The generic params must match the augmented interface's signature even
@@ -37,6 +37,7 @@ declare module "@tanstack/react-table" {
     // the column id when omitted (fine for columns that don't need one,
     // like "actions", which is excluded from the list via enableHiding).
     label?: string;
+    className?: string;
   }
 }
 
@@ -145,7 +146,7 @@ export function DataTable<TData, TValue>({
             ? bulkToolbar(selectedRows, clearSelection)
             : toolbar?.(table)}
         </div>
-        <ColumnVisibilityMenu table={table} />
+        <DataTableSettings table={table} storageKey={storageKey} />
       </div>
       {/* A light single border here (not the heavier ring the surrounding Card
           already uses) — these tables are always inside a Card, so matching
@@ -156,7 +157,7 @@ export function DataTable<TData, TValue>({
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id}>
                 {headerGroup.headers.map((header) => (
-                  <TableHead key={header.id}>
+                  <TableHead key={header.id} className={header.column.columnDef.meta?.className}>
                     {header.isPlaceholder
                       ? null
                       : flexRender(header.column.columnDef.header, header.getContext())}
@@ -170,7 +171,7 @@ export function DataTable<TData, TValue>({
               table.getRowModel().rows.map((row) => (
                 <TableRow key={row.id} data-state={row.getIsSelected() ? "selected" : undefined}>
                   {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>
+                    <TableCell key={cell.id} className={cell.column.columnDef.meta?.className}>
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </TableCell>
                   ))}

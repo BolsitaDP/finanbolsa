@@ -1,8 +1,10 @@
 "use client";
 
 import { useTransition } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { PlusIcon, ArchiveIcon, RotateCcwIcon, MapPinIcon, BriefcaseIcon } from "lucide-react";
+import { PlusIcon, ArchiveIcon, RotateCcwIcon, MapPinIcon, BriefcaseIcon, ArrowRightIcon } from "lucide-react";
 
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -25,7 +27,6 @@ type Project = {
   notes: string | null;
   archivedAt: Date | null;
 };
-
 type ProjectStats = {
   expense: Record<string, number>;
   income: Record<string, number>;
@@ -83,6 +84,7 @@ export function ProjectsGrid({
 
 function ProjectCard({ project, stats }: { project: Project; stats?: ProjectStats }) {
   const [isPending, startTransition] = useTransition();
+  const router = useRouter();
 
   const expenseTotal = stats ? Object.values(stats.expense).reduce((a, b) => a + b, 0) : 0;
   const incomeTotal = stats ? Object.values(stats.income).reduce((a, b) => a + b, 0) : 0;
@@ -108,8 +110,15 @@ function ProjectCard({ project, stats }: { project: Project; stats?: ProjectStat
     });
   }
 
+  function openProject() {
+    router.push(`/proyectos/${project.id}`);
+  }
+
   return (
-    <Card className="overflow-hidden">
+    <Card
+      className="cursor-pointer overflow-hidden transition-shadow hover:shadow-md"
+      onClick={openProject}
+    >
       {project.color && <div className={`h-1 w-full ${project.color}`} />}
       <CardHeader className="pb-2">
         <div className="flex items-center gap-2">
@@ -123,7 +132,11 @@ function ProjectCard({ project, stats }: { project: Project; stats?: ProjectStat
             </Badge>
           )}
         </div>
-        <h3 className="truncate font-medium">{project.name}</h3>
+        <h3 className="truncate font-medium">
+          <Link href={`/proyectos/${project.id}`} className="hover:underline">
+            {project.name}
+          </Link>
+        </h3>
         {(project.startDate || project.endDate) && (
           <p className="text-xs text-muted-foreground">
             {project.startDate && `Desde ${formatDate(project.startDate)}`}
@@ -158,7 +171,16 @@ function ProjectCard({ project, stats }: { project: Project; stats?: ProjectStat
 
         <Separator />
 
-        <div className="flex gap-2">
+        <div className="flex gap-2" onClick={(event) => event.stopPropagation()}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="flex-1"
+            nativeButton={false}
+            render={<Link href={`/proyectos/${project.id}`} />}
+          >
+            Ver detalle <ArrowRightIcon />
+          </Button>
           <ProjectFormDialog
             project={project}
             trigger={

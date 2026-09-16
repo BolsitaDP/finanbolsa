@@ -61,19 +61,23 @@ export function ReglasTable({
         accessorKey: "conditionsText",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Si" />,
         cell: ({ row }) => (
-          <span className="text-sm text-muted-foreground">{row.original.conditionsText}</span>
+          <span className="block max-w-[min(36vw,420px)] truncate text-sm text-muted-foreground">
+            {row.original.conditionsText}
+          </span>
         ),
         enableSorting: false,
-        meta: { label: "Si" },
+        meta: { label: "Si", className: "max-w-[min(36vw,420px)]" },
       },
       {
         accessorKey: "actionsText",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Entonces" />,
         cell: ({ row }) => (
-          <span className="text-sm text-muted-foreground">{row.original.actionsText}</span>
+          <span className="block max-w-[min(36vw,420px)] truncate text-sm text-muted-foreground">
+            {row.original.actionsText}
+          </span>
         ),
         enableSorting: false,
-        meta: { label: "Entonces" },
+        meta: { label: "Entonces", className: "max-w-[min(36vw,420px)]" },
       },
       {
         accessorKey: "enabled",

@@ -18,6 +18,7 @@ type ProjectInput = {
 
 function revalidateAll() {
   revalidatePath("/proyectos");
+  revalidatePath("/proyectos/[id]", "page");
   revalidatePath("/transacciones");
   revalidatePath("/importar");
   revalidatePath("/");

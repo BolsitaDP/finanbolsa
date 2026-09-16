@@ -1,0 +1,11 @@
+services:
+  web:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      # SQLite file persists on the host across container rebuilds/updates.
+      - ./data:/app/data
+    environment:
+      - DATABASE_URL=/app/data/finanbolsa.db

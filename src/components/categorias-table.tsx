@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { PencilIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, PencilIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -29,23 +29,112 @@ export function CategoriasTable({
 }) {
   const nameById = React.useMemo(() => new Map(categories.map((c) => [c.id, c.name])), [categories]);
   const [search, setSearch] = React.useState("");
+  const [expanded, setExpanded] = React.useState<Set<string>>(
+    () => new Set(orderedCategories.filter((c) => !c.parentCategoryId).map((c) => c.id))
+  );
+  const [expandedLoaded, setExpandedLoaded] = React.useState(false);
 
-  const filtered = React.useMemo(() => {
-    if (!search) return orderedCategories;
+  React.useEffect(() => {
+    const restore = () => {
+      try {
+        const saved = localStorage.getItem("finanbolsa:categorias:expanded");
+        if (saved) {
+          const savedIds = JSON.parse(saved);
+          if (Array.isArray(savedIds) && savedIds.every((id) => typeof id === "string")) {
+            const parentIds = new Set(
+              orderedCategories.filter((category) => !category.parentCategoryId).map((category) => category.id)
+            );
+            setExpanded(new Set(savedIds.filter((id: string) => parentIds.has(id))));
+          }
+        }
+      } catch {
+        // Ignore malformed or inaccessible storage and keep all groups expanded.
+      }
+      setExpandedLoaded(true);
+    };
+    const timeoutId = window.setTimeout(restore, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [orderedCategories]);
+
+  React.useEffect(() => {
+    if (!expandedLoaded) return;
+    try {
+      localStorage.setItem("finanbolsa:categorias:expanded", JSON.stringify([...expanded]));
+    } catch {
+      // Ignore storage write failures.
+    }
+  }, [expanded, expandedLoaded]);
+
+  const childrenByParent = React.useMemo(() => {
+    const grouped = new Map<string, Category[]>();
+    for (const category of categories) {
+      if (!category.parentCategoryId) continue;
+      const children = grouped.get(category.parentCategoryId) ?? [];
+      children.push(category);
+      grouped.set(category.parentCategoryId, children);
+    }
+    return grouped;
+  }, [categories]);
+
+  const visibleCategories = React.useMemo(() => {
     const q = search.toLowerCase();
-    return orderedCategories.filter((c) => c.name.toLowerCase().includes(q));
-  }, [orderedCategories, search]);
+    if (q) {
+      return orderedCategories.filter((category) => {
+        if (category.name.toLowerCase().includes(q)) return true;
+        const parent = category.parentCategoryId ? categories.find((c) => c.id === category.parentCategoryId) : null;
+        return Boolean(parent?.name.toLowerCase().includes(q));
+      });
+    }
+    return orderedCategories.filter(
+      (category) => !category.parentCategoryId || expanded.has(category.parentCategoryId)
+    );
+  }, [categories, expanded, orderedCategories, search]);
 
-  const columns: ColumnDef<Category>[] = React.useMemo(
-    () => [
+  const groupedCategories = React.useMemo(
+    () => ({
+      expense: visibleCategories.filter((category) => category.kind === "expense"),
+      income: visibleCategories.filter((category) => category.kind === "income"),
+    }),
+    [visibleCategories]
+  );
+
+  function columnsFor(): ColumnDef<Category>[] {
+    return [
       {
         accessorKey: "name",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Nombre" />,
-        cell: ({ row }) => (
-          <span className={row.original.parentCategoryId ? "pl-6 text-muted-foreground" : "font-medium"}>
-            {row.original.parentCategoryId ? `↳ ${row.original.name}` : row.original.name}
-          </span>
-        ),
+        cell: ({ row }) => {
+          const categoryChildren = childrenByParent.get(row.original.id) ?? [];
+          const isExpanded = expanded.has(row.original.id);
+          return (
+            <div className="flex items-center gap-1">
+              {!row.original.parentCategoryId && categoryChildren.length > 0 ? (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="shrink-0"
+                  aria-label={isExpanded ? "Ocultar subcategorías" : "Mostrar subcategorías"}
+                  aria-expanded={isExpanded}
+                  onClick={() =>
+                    setExpanded((current) => {
+                      const next = new Set(current);
+                      if (next.has(row.original.id)) next.delete(row.original.id);
+                      else next.add(row.original.id);
+                      return next;
+                    })
+                  }
+                >
+                  {isExpanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
+                </Button>
+              ) : (
+                <span className="size-8 shrink-0" aria-hidden="true" />
+              )}
+              <span className={row.original.parentCategoryId ? "text-muted-foreground" : "font-medium"}>
+                {row.original.parentCategoryId ? `↳ ${row.original.name}` : row.original.name}
+              </span>
+            </div>
+          );
+        },
         meta: { label: "Nombre" },
       },
       {
@@ -95,44 +184,59 @@ export function CategoriasTable({
           </div>
         ),
       },
-    ],
-    [categories, nameById]
-  );
+    ];
+  }
+
+  function renderGroup(kind: "expense" | "income", label: string) {
+    const group = groupedCategories[kind];
+    return (
+      <section key={kind} className="flex flex-col gap-3">
+        <div>
+          <h2 className="text-lg font-semibold">{label}</h2>
+          <p className="text-sm text-muted-foreground">
+            {group.length} {group.length === 1 ? "categoría visible" : "categorías visibles"}
+          </p>
+        </div>
+        <DataTable
+          columns={columnsFor()}
+          data={group}
+          pageSize={50}
+          getRowId={(row) => row.id}
+          emptyMessage={`No hay categorías de ${label.toLowerCase()} que coincidan.`}
+          storageKey={`categorias-${kind}`}
+          bulkToolbar={(selected, clear) => {
+            const ids = selected.map((category) => category.id);
+            return (
+              <BulkActionsBar count={selected.length} onClear={clear}>
+                <BulkEditCategoriesDialog
+                  ids={ids}
+                  categories={categories}
+                  trigger={
+                    <Button variant="outline" size="sm">
+                      <PencilIcon /> Editar
+                    </Button>
+                  }
+                />
+                <BulkDeleteButton
+                  count={selected.length}
+                  action={() => bulkDeleteCategories(ids)}
+                  confirmMessage={`¿Eliminar ${selected.length} categorías?`}
+                  successMessage={`${selected.length} categorías eliminadas`}
+                  onDone={clear}
+                />
+              </BulkActionsBar>
+            );
+          }}
+        />
+      </section>
+    );
+  }
 
   return (
-    <DataTable
-      columns={columns}
-      data={filtered}
-      pageSize={50}
-      getRowId={(row) => row.id}
-      emptyMessage="No hay categorías que coincidan."
-      storageKey="categorias"
-      bulkToolbar={(selected, clear) => {
-        const ids = selected.map((c) => c.id);
-        return (
-          <BulkActionsBar count={selected.length} onClear={clear}>
-            <BulkEditCategoriesDialog
-              ids={ids}
-              categories={categories}
-              trigger={
-                <Button variant="outline" size="sm">
-                  <PencilIcon /> Editar
-                </Button>
-              }
-            />
-            <BulkDeleteButton
-              count={selected.length}
-              action={() => bulkDeleteCategories(ids)}
-              confirmMessage={`¿Eliminar ${selected.length} categorías? Las transacciones y payees que las usan quedarán sin categoría, el presupuesto asociado se borra, y sus subcategorías (si tienen) pasan a ser principales.`}
-              successMessage={`${selected.length} categorías eliminadas`}
-              onDone={clear}
-            />
-          </BulkActionsBar>
-        );
-      }}
-      toolbar={() => (
-        <DataTableSearchInput value={search} onChange={setSearch} placeholder="Buscar categoría..." />
-      )}
-    />
+    <div className="flex flex-col gap-8">
+      <DataTableSearchInput value={search} onChange={setSearch} placeholder="Buscar categoría..." />
+      {renderGroup("expense", "Gastos")}
+      {renderGroup("income", "Ingresos")}
+    </div>
   );
 }

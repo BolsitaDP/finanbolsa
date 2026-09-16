@@ -33,6 +33,7 @@ type Row = {
   payeeId: string | null;
   payeeLabel: string | null;
   descriptionLabel: string | null;
+  payeeOrDescriptionLabel: string;
   categoryId: string | null;
   categoryName: string | null;
   categoryKind: string | null;
@@ -83,6 +84,14 @@ export function TransaccionesTable({
           payeeId: tx.payeeId,
           payeeLabel: payee,
           descriptionLabel: tx.description ?? (tx.type === "transfer" ? "Transferencia" : null),
+          payeeOrDescriptionLabel:
+            tx.type === "transfer"
+              ? `De ${accountName.get(tx.accountId) ?? tx.accountId} a ${
+                  tx.destinationAccountId
+                    ? (accountName.get(tx.destinationAccountId) ?? tx.destinationAccountId)
+                    : "cuenta destino"
+                }`
+              : payee ?? tx.description ?? "",
           categoryId: tx.categoryId,
           categoryName: tx.categoryId ? (categoryName.get(tx.categoryId) ?? tx.categoryId) : null,
           categoryKind: tx.categoryId ? (categoryKind.get(tx.categoryId) ?? null) : null,
@@ -106,7 +115,7 @@ export function TransaccionesTable({
       if (typeFilter !== "all" && r.type !== typeFilter) return false;
       if (accountFilter !== "all" && r.accountId !== accountFilter) return false;
       if (search) {
-        const haystack = `${r.payeeLabel ?? ""} ${r.descriptionLabel ?? ""} ${r.categoryName ?? ""} ${r.accountLabel}`.toLowerCase();
+        const haystack = `${r.payeeOrDescriptionLabel} ${r.categoryName ?? ""} ${r.accountLabel}`.toLowerCase();
         if (!haystack.includes(search.toLowerCase())) return false;
       }
       return true;
@@ -126,14 +135,16 @@ export function TransaccionesTable({
       },
       {
         id: "payeeOrDescription",
-        accessorFn: (r) => r.payeeLabel ?? r.descriptionLabel ?? "",
+        accessorFn: (r) => r.payeeOrDescriptionLabel,
         header: ({ column }) => <DataTableColumnHeader column={column} title="Payee / Descripción" />,
         meta: { label: "Payee / Descripción" },
         cell: ({ row }) => {
-          const { payeeId, payeeLabel, descriptionLabel, hasSplits } = row.original;
+          const { type, payeeId, payeeLabel, descriptionLabel, payeeOrDescriptionLabel, hasSplits } = row.original;
           return (
             <div className="flex max-w-[280px] items-center gap-1.5 truncate font-medium">
-              {payeeId && payeeLabel ? (
+              {type === "transfer" ? (
+                <span className="truncate">{payeeOrDescriptionLabel}</span>
+              ) : payeeId && payeeLabel ? (
                 <Link
                   href={`/payees/${payeeId}`}
                   className="truncate hover:underline"

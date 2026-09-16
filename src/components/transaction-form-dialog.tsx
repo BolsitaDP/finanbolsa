@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
-import { PlusIcon, WandSparklesIcon, XIcon } from "lucide-react";
+import { PlusIcon, SaveIcon, Trash2Icon, WandSparklesIcon, XIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -13,6 +13,7 @@ import {
   DialogContent,
   DialogFooter,
   DialogHeader,
+  DialogPortal,
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
@@ -93,6 +94,14 @@ type SplitRow = {
   description: string;
 };
 
+type UsualTransaction = {
+  id: string;
+  name: string;
+  values: Omit<FormValues, "date" | "notes"> & { notes: string };
+};
+
+const USUAL_TRANSACTIONS_KEY = "finanbolsa:usual-transactions";
+
 function splitRowsFromExisting(splits: ExistingSplit[]): SplitRow[] {
   return splits.map((s) => ({
     key: `existing-${s.id}`,
@@ -124,26 +133,77 @@ export function TransactionFormDialog({
   const [isPending, startTransition] = useTransition();
   const [ruleDialogOpen, setRuleDialogOpen] = useState(false);
   const [splitRows, setSplitRows] = useState<SplitRow[]>(() => splitRowsFromExisting(splits));
+  const [usualTransactions, setUsualTransactions] = useState<UsualTransaction[]>([]);
+  const [usualName, setUsualName] = useState("");
+  const [usualTransactionsLoaded, setUsualTransactionsLoaded] = useState(false);
+
+  const emptyValues: FormValues = {
+    date: toDateTimeInputValue(new Date()),
+    type: "expense",
+    accountId: accounts[0]?.id ?? "",
+    destinationAccountId: "none",
+    amountMinor: "",
+    currency: accounts[0]?.currency as FormValues["currency"] ?? "COP",
+    destinationAmountMinor: "",
+    destinationCurrency: "none",
+    categoryId: "none",
+    payeeId: "none",
+    description: "",
+    projectTrip: "none",
+    notes: "",
+  };
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
-      date: toDateTimeInputValue(transaction?.date ?? new Date()),
-      type: (transaction?.type as FormValues["type"]) ?? "expense",
-      accountId: transaction?.accountId ?? accounts[0]?.id ?? "",
-      destinationAccountId: transaction?.destinationAccountId ?? "none",
-      amountMinor: transaction?.amountMinor != null ? String(transaction.amountMinor) : "",
-      currency: (transaction?.currency as FormValues["currency"]) ?? accounts[0]?.currency ?? "COP",
-      destinationAmountMinor:
-        transaction?.destinationAmountMinor != null ? String(transaction.destinationAmountMinor) : "",
-      destinationCurrency: transaction?.destinationCurrency ?? "none",
-      categoryId: transaction?.categoryId ?? "none",
-      payeeId: transaction?.payeeId ?? "none",
-      description: transaction?.description ?? "",
-      projectTrip: transaction?.projectTrip ?? "none",
-      notes: transaction?.notes ?? "",
+      ...emptyValues,
+      ...(transaction
+        ? {
+            date: toDateTimeInputValue(transaction.date),
+            type: transaction.type as FormValues["type"],
+            accountId: transaction.accountId,
+            destinationAccountId: transaction.destinationAccountId ?? "none",
+            amountMinor: String(transaction.amountMinor),
+            currency: transaction.currency as FormValues["currency"],
+            destinationAmountMinor:
+              transaction.destinationAmountMinor != null ? String(transaction.destinationAmountMinor) : "",
+            destinationCurrency: transaction.destinationCurrency ?? "none",
+            categoryId: transaction.categoryId ?? "none",
+            payeeId: transaction.payeeId ?? "none",
+            description: transaction.description ?? "",
+            projectTrip: transaction.projectTrip ?? "none",
+            notes: transaction.notes ?? "",
+          }
+        : {}),
     },
   });
+
+  useEffect(() => {
+    if (transaction) return;
+    const restore = () => {
+      try {
+        const saved = localStorage.getItem(USUAL_TRANSACTIONS_KEY);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) setUsualTransactions(parsed);
+        }
+      } catch {
+        // Ignore malformed or inaccessible storage.
+      }
+      setUsualTransactionsLoaded(true);
+    };
+    const timeoutId = window.setTimeout(restore, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [transaction]);
+
+  useEffect(() => {
+    if (transaction || !usualTransactionsLoaded) return;
+    try {
+      localStorage.setItem(USUAL_TRANSACTIONS_KEY, JSON.stringify(usualTransactions));
+    } catch {
+      // Ignore storage write failures.
+    }
+  }, [transaction, usualTransactions, usualTransactionsLoaded]);
 
   const type = form.watch("type");
   const accountId = form.watch("accountId");
@@ -185,6 +245,34 @@ export function TransactionFormDialog({
 
   function removeSplitRow(key: string) {
     setSplitRows((prev) => prev.filter((r) => r.key !== key));
+  }
+
+  function saveUsualTransaction() {
+    const name = usualName.trim();
+    if (!name) {
+      toast.error("Escribe un nombre para la transacción usual");
+      return;
+    }
+    const values = { ...form.getValues() };
+    Reflect.deleteProperty(values, "date");
+    setUsualTransactions((current) => [
+      ...current,
+      { id: `usual-${Date.now()}`, name, values: values as UsualTransaction["values"] },
+    ]);
+    setUsualName("");
+    toast.success("Transacción usual guardada");
+  }
+
+  function applyUsualTransaction(usual: UsualTransaction) {
+    form.reset({
+      ...usual.values,
+      date: toDateTimeInputValue(new Date()),
+    });
+    setSplitRows([]);
+  }
+
+  function deleteUsualTransaction(id: string) {
+    setUsualTransactions((current) => current.filter((usual) => usual.id !== id));
   }
 
   function onSubmit(values: FormValues) {
@@ -244,7 +332,16 @@ export function TransactionFormDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (nextOpen && !transaction) {
+          form.reset({ ...emptyValues, date: toDateTimeInputValue(new Date()) });
+          setSplitRows([]);
+        }
+      }}
+    >
       <DialogTrigger render={trigger} />
       <DialogContent className="max-w-xl">
         <DialogHeader>
@@ -593,6 +690,61 @@ export function TransactionFormDialog({
           </form>
         </Form>
       </DialogContent>
+
+      {!transaction && open && (
+        <DialogPortal>
+          <aside className="fixed top-1/2 right-[max(1rem,calc(50%_-_560px))] z-50 hidden max-h-[min(720px,calc(100vh_-_2rem))] w-64 -translate-y-1/2 flex-col gap-3 overflow-hidden rounded-xl bg-popover p-3 text-sm text-popover-foreground ring-1 ring-foreground/10 xl:flex">
+            <div>
+              <h2 className="text-sm font-semibold">Transacciones usuales</h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Guarda combinaciones frecuentes y aplícalas al formulario.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Input
+                value={usualName}
+                onChange={(event) => setUsualName(event.target.value)}
+                placeholder="Nombre"
+                aria-label="Nombre de la transacción usual"
+                className="h-8 min-w-0 text-xs"
+              />
+              <Button type="button" size="icon-sm" onClick={saveUsualTransaction} aria-label="Guardar transacción usual">
+                <SaveIcon />
+              </Button>
+            </div>
+            <div className="flex min-h-0 flex-col gap-2 overflow-y-auto">
+              {usualTransactions.length === 0 ? (
+                <p className="py-4 text-center text-xs text-muted-foreground">
+                  Aún no tienes transacciones usuales.
+                </p>
+              ) : (
+                usualTransactions.map((usual) => (
+                  <div key={usual.id} className="flex items-center gap-1 rounded-md border bg-background p-1.5">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="h-auto min-w-0 flex-1 justify-start truncate px-2 py-1.5 text-left text-xs"
+                      onClick={() => applyUsualTransaction(usual)}
+                      title="Aplicar al formulario"
+                    >
+                      {usual.name}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => deleteUsualTransaction(usual.id)}
+                      aria-label={`Eliminar ${usual.name}`}
+                    >
+                      <Trash2Icon />
+                    </Button>
+                  </div>
+                ))
+              )}
+            </div>
+          </aside>
+        </DialogPortal>
+      )}
 
       {ruleDialogOpen && (
         <CreateRuleFromTransactionDialog

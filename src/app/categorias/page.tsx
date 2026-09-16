@@ -53,7 +53,7 @@ export default async function CategoriasPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Todas las categorías</CardTitle>
+          <CardTitle>Categorías por tipo</CardTitle>
         </CardHeader>
         <CardContent>
           <CategoriasTable categories={allCategories} orderedCategories={orderedCategories} />
