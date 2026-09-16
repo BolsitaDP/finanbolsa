@@ -19,6 +19,13 @@ import {
   resetTransactions,
 } from "./actions";
 
+// This page reads live counts straight from the database with no dynamic
+// API (searchParams, cookies, etc.) to signal that to Next automatically —
+// without this, it gets statically prerendered once at build time (when the
+// database has no schema yet in a fresh Docker build) and would otherwise
+// keep serving that stale snapshot in production instead of live data.
+export const dynamic = "force-dynamic";
+
 export default async function ConfiguracionPage() {
   const [s, txCount, catCount, payeeCount, ruleCount, budgetCount, accountCount, importBatches] =
     await Promise.all([

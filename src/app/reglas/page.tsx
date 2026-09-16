@@ -30,6 +30,10 @@ const OP_LABELS: Record<RuleOp, string> = {
   less_or_equal: "menor o igual a",
 };
 
+// Reads live data with no dynamic API to force Next to treat it as such —
+// see the comment in src/app/configuracion/page.tsx for why this matters.
+export const dynamic = "force-dynamic";
+
 export default async function ReglasPage() {
   const [allRules, allCategories, allPayees, allAccounts] = await Promise.all([
     db.select().from(rules).orderBy(asc(rules.sortOrder)),

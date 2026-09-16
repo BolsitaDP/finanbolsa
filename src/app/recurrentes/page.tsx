@@ -16,6 +16,10 @@ import { Badge } from "@/components/ui/badge";
 import { detectRecurring } from "@/lib/recurring";
 import { formatDate, formatMoney } from "@/lib/format";
 
+// Reads live data with no dynamic API to force Next to treat it as such —
+// see the comment in src/app/configuracion/page.tsx for why this matters.
+export const dynamic = "force-dynamic";
+
 export default async function RecurrentesPage() {
   const [allTransactions, allPayees, allCategories] = await Promise.all([
     db.select().from(transactions).where(isNull(transactions.deletedAt)),

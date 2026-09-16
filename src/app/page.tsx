@@ -37,6 +37,10 @@ function MonthDelta({ current, previous, higherIsBad }: { current: number; previ
   );
 }
 
+// Reads live data with no dynamic API to force Next to treat it as such —
+// see the comment in src/app/configuracion/page.tsx for why this matters.
+export const dynamic = "force-dynamic";
+
 export default async function DashboardPage() {
   const [allAccounts, allTransactions, allCategories, allBudgets, allSplits] = await Promise.all([
     db.select().from(accounts),

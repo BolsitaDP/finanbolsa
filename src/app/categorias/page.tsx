@@ -8,6 +8,10 @@ import { Button } from "@/components/ui/button";
 import { CategoryFormDialog } from "@/components/category-form-dialog";
 import { CategoriasTable } from "@/components/categorias-table";
 
+// Reads live data with no dynamic API to force Next to treat it as such —
+// see the comment in src/app/configuracion/page.tsx for why this matters.
+export const dynamic = "force-dynamic";
+
 export default async function CategoriasPage() {
   const allCategories = await db.select().from(categories).orderBy(asc(categories.name));
   const nameById = new Map(allCategories.map((c) => [c.id, c.name]));

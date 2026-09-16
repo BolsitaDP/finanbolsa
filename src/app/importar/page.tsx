@@ -7,6 +7,10 @@ import { ImportHistoryCard } from "@/components/import-history-card";
 import { getAllProjectNames } from "@/app/proyectos/actions";
 import { getImportBatches } from "./actions";
 
+// Reads live data with no dynamic API to force Next to treat it as such —
+// see the comment in src/app/configuracion/page.tsx for why this matters.
+export const dynamic = "force-dynamic";
+
 export default async function ImportarPage() {
   const [allAccounts, allCategories, allPayees, projectNames, batches] = await Promise.all([
     db.select().from(accounts).orderBy(asc(accounts.name)),
