@@ -44,6 +44,9 @@ yarn-error.log*
 /data/*.db-shm
 # nightly backups (see npm run db:backup)
 /data/backups/
+# scratch dir used by db:verify-backup to restore a copy without touching the
+# live database
+/data/restore-test/
 
 # typescript
 *.tsbuildinfo

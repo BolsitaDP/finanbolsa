@@ -1,279 +1,362 @@
-# Plan de mejora — FinanBolsa
+# FinanBolsa — plan
 
-> Escrito tras la revisión del código (2026-09-26). Estado actual: v0.1.0, ~1 115
-> transacciones, 8 cuentas, 44 reglas, desplegado en Raspberry Pi vía Docker.
-
-## Estado
-
-| # | Problema | Estado |
-|---|----------|--------|
-| 1 | Sin autenticación | **Hecho** — `src/proxy.ts` + login + guard en actions |
-| 2 | Sin backups automáticos | **Hecho** — `VACUUM INTO` + servicio `backup` en compose |
-| 3 | Tests de `balance` y `recurring` | **Hecho** — 40 tests en verde |
-| 4 | Sin índices en `transactions` | **Hecho** — 3 índices, medidos a 50k filas |
-| 5 | Todo en memoria, filtrado en cliente | **Parcial** — /transacciones hecho |
-| 6 | README de `create-next-app` | Pendiente — 30 min |
-| 7 | Sin conversión de moneda | Pendiente — ~1 día |
-| 8 | Recurrentes read-only | Pendiente — ~4 h |
-| 9 | Presupuesto sin plantilla | Pendiente — ~3 h |
-| 10 | Parser acoplado a un banco | Pendiente — ~1 día |
+> App de finanzas personales, self-hosted. **Destino: Raspberry Pi en Docker,
+> accesible desde cualquier dispositivo.**
+> Last review: 2026-09-27 · v0.1.0 · 1 115 transacciones, 8 cuentas, 44 reglas
 
 ---
 
-## Diagnóstico resumido
+## 1. Estado
 
-| # | Problema | Impacto | Esfuerzo |
-|---|----------|---------|----------|
-| 1 | Sin autenticación, puerto 3000 expuesto en LAN | **Crítico** — cualquiera puede leer y borrar todo | ~3 h |
-| 2 | Sin backups automáticos (WAL de 4 MB sin consolidar) | **Crítico** — pérdida de datos irrecuperable | ~1 h |
-| 3 | Cero tests sobre la lógica de cálculo más delicada | **Alto** — los números de todas las páginas sin red de seguridad | ~2 h |
-| 4 | Sin índices en `transactions` | Medio — full scans en cada carga | 15 min |
-| 5 | Todo se carga en memoria y se filtra en el cliente | Medio — no escala, URLs no compartibles | ~1 día |
-| 6 | README es el de `create-next-app` | Bajo — pérdida de contexto a futuro | 30 min |
-| 7 | Sin conversión de moneda | Producto — no hay patrimonio único | ~1 día |
-| 8 | Recurrentes read-only, sin proyección | Producto — mitad de la funcionalidad | ~4 h |
-| 9 | Presupuesto sin plantilla ni rollover visible | Producto — fricción mensual | ~3 h |
-| 10 | Parser de PDF acoplado a un solo banco | Producto — sin fallback | ~1 día |
+| # | Ítem | Estado |
+|---|------|--------|
+| 1 | Autenticación | **Hecho** — `src/proxy.ts`, login, guard en actions |
+| 2 | Backups automáticos | **Hecho** — `VACUUM INTO` + servicio `backup` + simulacro de restauración probado |
+| 3 | Tests de la lógica de cálculo | **Hecho** — 61 tests en verde |
+| 4 | Índices en `transactions` | **Hecho** — 3 índices, medidos a 50k filas |
+| 5 | Paginación y filtrado en SQL | **Parcial** — `/transacciones` listo; faltan las páginas de agregación |
+| 6 | Despliegue en la Pi | **Pendiente** — ver §3 |
+| 7 | Bug de zona horaria | **Pendiente** — latente, 0 % de impacto en los datos actuales |
+| 8 | Producto (README, moneda, recurrentes proyectados) | **Pendiente** — ver §4 |
+
+Detalle de lo hecho y sus mediciones: **Apéndice A**.
 
 ---
 
-## Fase 1 — Seguridad y protección de datos
+## 2. Qué sigue
 
-### 1.1 Autenticación
+Ordenado por riesgo, no por comodidad. El razonamiento de cada uno está en su
+sección del apéndice.
 
-**Problema.** No existe login, middleware ni control de sesión en todo `src/`.
-`docker-compose.yml` publica `3000:3000`. La zona de peligro de
-`/configuracion` permite borrar todas las transacciones escribiendo
-`RESTABLECER` en un diálogo — sin más verificación que eso.
+### 2.1 Probar una restauración real — HECHO
 
-**Decisión.** Contraseña única por variable de entorno + cookie de sesión firmada
-con HMAC-SHA256. Sin usuarios ni base de datos de sesiones: la app es
-single-user por diseño, y un esquema de identidad completo sería complejidad sin destinatario.
+**Un backup que nunca se ha restaurado no es un backup.** Era el punto más
+barato de la lista y el que más rápido podía revelar un fallo grave.
 
-> En Next 16 el archivo se llama `src/proxy.ts`, **no** `middleware.ts`
-> (renombrado en v16.0.0; `middleware` está deprecado). El proxy corre con
-> runtime de Node.js por defecto.
+**Simulacro ejecutado** (en `data/restore-test/`, aislado — la base viva nunca
+se tocó):
+1. Se copió el respaldo más reciente a un archivo aparte.
+2. **Resultó ser un respaldo de antes de la migración `0006`** (6 migraciones y
+   0 índices; la base viva tiene 7 y 3). Se corrió `db:migrate` sobre el
+   archivo restaurado para traerlo al día. Ese paso —migrar un respaldo hacia
+   adelante— es donde una recuperación real se rompe, y ahora está probado.
+3. Se levantó una **segunda instancia** en el puerto 3100 apuntando al
+   restaurado, y se comparó su salida contra la instancia viva.
+4. Las **16 páginas** (dashboard, transacciones con paginación/búsqueda/orden,
+   presupuesto, recurrentes, todos los listados, configuración, importar) y los
+   exports JSON y CSV dieron salida **idéntica**. Cero errores de consola.
+
+**Quedó como script reutilizable:**
+`src/db/scripts/verify-backup.ts` → `npm run db:verify-backup`
+(compara integridad y contenido del respaldo contra la base viva; acepta una
+ruta explícita para validar un respaldo antiguo o sospechoso).
+
+**El verificador se probó a sí mismo.** Un detector que nunca falla no sirve,
+así que se le inyectó corrupción de verdad:
+
+| Daño inyectado | `integrity_check` de SQLite | `verify-backup` |
+|---|---|---|
+| basura en el header | no abre | **detectado** (exit 1) |
+| archivo truncado | no abre | **detectado** (exit 1) |
+| basura en página **libre** | `ok` (!) | `ok` — correcto, no hay datos que perder |
+| basura en página **con datos** | `malformed` | **detectado** (exit 1) |
+| intacto (control) | `ok` | **pasa** (exit 0, sin falsos positivos) |
+
+> **Lo que salió de probar el detector:** `integrity_check` verifica la
+> estructura del B-tree, no que cada byte sea el que se escribió. Medido aquí:
+> 4 KB de basura en una página *libre* dan `ok` **y** devuelven las 1 135 filas
+> intactas. Por eso el script además **lee cada tabla de verdad**, que es lo que
+> atrapa la corrupción en una página con datos. Con `integrity_check` solo
+> habría dado un falso "todo bien".
+
+**Cómo restaurar de verdad:**
+```bash
+docker compose stop web
+cp data/backups/finanbolsa-AAAA-MM-DD.db data/finanbolsa.db
+rm -f data/finanbolsa.db-wal data/finanbolsa.db-shm
+docker compose run --rm web npm run db:migrate   # trae el respaldo al día
+docker compose up -d web
+```
+El `-wal`/`-shm` se borran porque pueden contener páginas más nuevas que
+pisarían el respaldo restaurado.
+
+
+### 2.2 Despliegue en la Pi — §3
+
+### 2.3 Agregación en SQL para las páginas de totales — ~1 día
+
+`/recurrentes` (485 ms), `/` (513 ms) y `/presupuesto` (331 ms) a 50k filas.
+No se pueden paginar: necesitan totales. Hay que empujar la agregación a
+`GROUP BY` en SQL, reescribiendo `spending-stats.ts` y `recurrentes`.
+
+Es el último cuello de botella de datos que queda. Cuando esté, los índices de
+`category_id` y `currency` empiezan a justificarse (hoy no se usan porque todo
+se agrega en JS).
+
+### 2.4 El markup de Tailwind es el nuevo piso — ~2 h
+
+Con la paginación resuelta, `/transacciones` bajó de 26,4 MB a 310 KB a 50k
+filas — pero 310 KB para **50 filas** es 4,7 KB por fila, casi todo clases de
+Tailwind repetidas (`<td>` ~85 chars × 7 celdas; un `<span>` de badge, ~640).
+El shell de la app son ~77 KB en **cada** página, constante.
+
+Es independiente del tamaño de la base: es lo que queda cuando el dato ya no
+es el problema. Opciones: reducir `PAGE_SIZE`, o extraer las clases repetidas a
+un `@apply` / componente.
+
+### 2.5 Bug de zona horaria — ~1 h
+
+`recurring.ts` agrupa meses por UTC; `month.ts` por hora local. **Medido:
+0 de 1 115 transacciones (0,00 %) caen en meses distintos**, así que hoy no
+produce ningún número incorrecto. Es latente, no activo — por eso va aquí y no
+antes. Se activa sola en cuanto entre un movimiento un día 1 después de las
+7 p. m. o un día 31 después de las 7 p. m.
+
+Arreglarlo cambia el resultado de `/recurrentes`, así que merece ir con tests
+que lo demuestren.
+
+---
+
+## 3. Despliegue en la Pi
+
+### 3.1 Pendiente: HTTPS
+
+Hoy `docker-compose.yml` publica `3000:3000` y la cookie de sesión viaja **en
+claro**. El código ya está preparado: `FINANBOLSA_HTTPS=true` marca la cookie
+como `Secure`, y está en `.env.example`.
+
+Lo que falta es el TLS. Lo natural es **Caddy como reverse proxy** delante del
+contenedor, con certificado automático. Implica:
+
+- `web` deja de publicar el puerto hacia la LAN (o queda en `127.0.0.1`)
+- Caddy enruta 443 → 3000 y resuelve el certificado de un dominio propio
+- `FINANBOLSA_HTTPS=true`
+- **A verificar:** el proxy (`src/proxy.ts`) construye sus redirects con
+  `request.url`. Si Caddy no reenvía el `Host` original, los redirects a
+  `/login` apunten a `localhost:3000` en vez de al dominio propio. Comprobarlo
+  con el proxy montado, no antes.
+
+Sin esto, la app funciona pero la sesión es interceptable en cualquier red
+intermedia. Es el punto de seguridad que más importa ahora que el objetivo es
+acceder desde fuera de casa.
+
+### 3.2 Pendiente: secretos en la Pi
+
+`AUTH_PASSWORD` y `AUTH_SECRET` salen de un `.env` en el host. Cosas a
+resolver: permisos del archivo (`chmod 600`, no versionado), que el `.env` no
+termine en un backup de Git, y qué rotar si la Pi se compromete (cambiar
+`AUTH_SECRET` invalida todas las sesiones — es el mecanismo de revocación).
+
+### 3.3 Riesgo conocido: el backup está en la misma tarjeta
+
+**Documentado, no resuelto** (decisión explícita).
+
+```
+finanbolsa.db            →  ./data/          ← tarjeta SD
+finanbolsa.db-backups/   →  ./data/backups/  ← la MISMA tarjeta SD
+```
+
+`VACUUM INTO` protege contra **corrupción lógica**: una importación mala, un
+`DELETE` accidental, un esquema incompatible. **No** protege contra la pérdida
+de la tarjeta, que es el modo de fallo más probable de una Pi.
+
+Mitigaciones que existen hoy, sin coste:
+- `/api/export?format=json` descarga un volcado que sí se puede guardar fuera
+- Retención de 14 días, así que siempre hay a qué volver tras un error tonto
+
+Si algún día se quiere cerrar del todo: sincronizar `data/backups/` a otro
+equipo. Requiere que haya otro dispositivo siempre encendido; por eso no se
+recomienda como primera medida.
+
+### 3.4 Riesgo conocido: desgaste de la SD
+
+SQLite en modo WAL hace escrituras pequeñas frecuentes (checkpoints) más un
+backup diario. Para una app con unos pocos movimientos al día el volumen es bajo y la tarjeta dura años. Anotado para que no sorprenda, no para actuar.
+
+### 3.5 Pendiente: procedimiento de actualización
+
+`deploy.sh` hace `git pull` + `docker compose up -d --build` sobre `master`. Le
+falta: qué hacer si el build falla a mitad (el contenedor viejo sigue vivo, pero
+conviene saberlo), y cómo volver atrás si una migración nueva rompe la app. Con
+`drizzle-kit migrate` las migraciones no tienen down, así que el rollback real
+es restaurar un backup — que es exactamente por qué §2.1 va primero.
+
+---
+
+## 4. Producto
+
+- **README real** — el actual es el de `create-next-app`. Esquema, decisiones de
+  diseño, cómo respaldar y restaurar, cómo desplegar.
+- **Conversión de moneda** — tabla de tasas (manual por mes basta). Sin esto,
+  "Patrimonio neto" son N gráficas separadas y no hay un número único.
+- **Recurrentes proyectados** — la detección ya funciona; falta proyectar los
+  próximos meses, avisar de subidas de precio y generar el movimiento del mes.
+- **Plantilla de presupuesto** — "copiar mes anterior", rollover visible
+  (el cálculo ya existe, no es visible ni configurable), presets.
+- **Importador CSV/XLSX genérico** como fallback: hoy el parser solo entiende
+  Bancolombia.
+- **Adjuntar recibos** a las transacciones.
+
+---
+
+## Apéndice A — Mediciones y decisiones
+
+Todo lo que se midió y por qué se decidió así. Conservado del plan original
+porque es lo que justifica las decisiones.
+
+### A.1 Autenticación
+
+**Problema.** No había login, middleware ni control de sesión en `src/`. La
+zona de peligro de `/configuracion` borraba todas las transacciones con solo
+escribir `RESTABLECER`.
+
+**Decisión.** Contraseña única por variable de entorno + cookie firmada con
+HMAC-SHA256. Sin usuarios ni tabla de sesiones: la app es single-user por
+diseño, y un esquema de identidad completo sería complejidad sin destinatario.
+
+> En Next 16 el archivo es `src/proxy.ts`, **no** `middleware.ts` (renombrado en
+> v16.0.0, `middleware` deprecado). Corre con runtime de Node.js por defecto.
 
 **Implementación.**
-- `src/lib/auth.ts` — `signSession`/`verifySession` (payload `{exp}` + HMAC,
-  comparación en tiempo constante), `passwordMatches`, `AUTH_SECRET` /
-  `AUTH_PASSWORD` con validación de arranque.
-- `src/proxy.ts` — matcher que cubre páginas y `/api`, excluyendo solo
-  `_next/static`, `_next/image` y `favicon.ico`. Sin cookie válida → redirect a
-  `/login`. `/api/*` sin sesión → 401 JSON en vez de redirect.
-- `src/app/login/page.tsx` + server action `loginAction`.
-- **`assertAuthenticated()` dentro de las server actions destructivas** de
-  `src/app/configuracion/actions.ts`.
+- `src/lib/auth.ts` — `createSessionToken`/`verifySessionToken` (payload `{exp}`
+  + HMAC, comparación en tiempo constante), `passwordMatches`.
+- `src/lib/auth-session.ts` — lo que necesita `next/headers`, separado para que
+  el proxy no dependa de él.
+- `src/proxy.ts` — matcher que cubre páginas y `/api`, excluyendo `_next/static`,
+  `_next/image`, `favicon.ico` **y `/login`**. Sin cookie → redirect a
+  `/login`. `/api/*` → 401 JSON en vez de redirect.
+- `src/app/login/` — página + server action.
+- `assertAuthenticated()` dentro de las 7 actions destructivas de
+  `configuracion/actions.ts`, y re-check en `/api/export`.
 
 > **Por qué el guard en las actions y no solo en el proxy:** la doc de Next
-> advierte que un cambio en el matcher puede dejar de cubrir una ruta, y que
-> las Server Actions son POST a la ruta donde se usan. Un `matcher` mal
-> escrito deja la app abierta sin error visible. Por eso el proxy da la
-> primera línea de defensa y las actions criticas se autorizan a si mismas.
+> advierte que un cambio en el matcher puede dejar de cubrir una ruta en
+> silencio, y que las Server Actions son POST a la ruta donde se usan. Un
+> `matcher` mal escrito deja la app abierta sin ningún error visible. El proxy
+> da la primera línea; las actions criticas se autorizan a sí mismas.
 
-**Estructura de rutas.** Para que `/login` no herede el shell con sidebar, la
-app se reorganiza en un route group `(app)/`: el layout raíz queda solo con
-`html`/`body`/`Toaster`, y el shell (sidebar + header + search) pasa a
-`src/app/(app)/layout.tsx`. Los route groups no afectan la URL, así que
-ningún enlace cambia.
+**Dos bugs que casi se cuelan** (documentados en el código):
+- El matcher excluía assets estáticos pero **no `/login`** → bucle de redirect.
+- `secure: true` incondicional hace que el login sea **imposible** por http
+  plano de LAN, porque el navegador descarta la cookie. Ahora depende de
+  `FINANBOLSA_HTTPS`.
 
-**Configuración.** `.env.local` gana `AUTH_PASSWORD` y `AUTH_SECRET`
-(`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`).
-`docker-compose.yml` las pasa como `environment:`. Si faltan, la app
-**arranca igual pero rechaza todo** en vez de fallar al boot — un error
-explícito en el log es más fácil de diagnosticar que un 500 en cada request.
+**Verificación.** 14 tests de auth. Manual: sin cookie → 307 a `/login`;
+`/api/export` → 401; contraseña incorrecta → rechazada con delay de 500 ms;
+`/login` con sesión activa → redirige a `/`.
 
-**Verificación.** `npm test` cubre firma/verificación de sesión, expiración,
-password incorrecto. Manual: request sin cookie → 302 a `/login`;
-`curl /api/export?format=json` sin cookie → 401.
+### A.2 Backups
 
----
-
-### 1.2 Backups automáticos
-
-**Problema.** El único respaldo es descargar `/api/export?format=json` a mano.
-Y el estado actual del archivo es elocuente:
+**Problema.** El único respaldo era descargar el export a mano. Y el estado de
+los archivos lo decía:
 
 ```
 finanbolsa.db      245 KB
 finanbolsa.db-wal  4.1 MB   ← casi todo el historial reciente sin consolidar
 ```
 
-En modo WAL el `.db` por sí solo está incompleto. Un backup que copie solo el
-`.db` pierde datos; uno que copie los archivos a mitad de escritura produce un
-archivo corrupto.
+En WAL el `.db` solo está incompleto: copiar solo ese archivo pierde datos, y
+copiar los archivos a mitad de escritura produce un respaldo corrupto.
 
-**Decisión.** `VACUUM INTO` — el mecanismo de backup online de SQLite. Corre
-sobre la base viva, respeta el WAL, y escribe un `.db` nuevo ya consistente y
-compactado. No requiere detener la app ni bloquear escrituras.
+**Decisión.** `VACUUM INTO` — backup online de SQLite: corre sobre la base
+viva, respeta el WAL, y escribe un `.db` nuevo consistente y compactado. Sin
+downtime y sin bloquear escrituras.
 
-**Implementación.**
-- `src/db/scripts/backup.ts` — `VACUUM INTO` a `data/backups/finanbolsa-YYYY-MM-DD.db`,
-  poda a los últimos 14 respaldos, loga tamaño y ruta. Fallo en cualquier
-  paso → exit code distinto de 0 (para que el cron lo note).
-- `npm run db:backup`.
-- Servicio `backup` en `docker-compose.yml`: la misma imagen, `sh -c` con un
-  `sleep` de 24 h entre ejecuciones. Corre al arrancar el contenedor y luego
-  una vez al día, drifting con la hora de inicio.
+**Implementación.** `src/db/scripts/backup.ts` (`npm run db:backup`), poda a 14
+días, exit code ≠ 0 si falla. Servicio `backup` en compose: misma imagen,
+misma ruta de `db:migrate` ya probada, `sleep 86400` entre ejecuciones.
 
-> Alternativa considerada y descartada: un `crond` de Alpine. Añade una
-> imagen de 8 MB y una capa de configuración por la misma funcionalidad que da
-> un `while true; do …; sleep 86400; done`. Para un contenedor que corre
-> exactamente una vez al día, no vale la pena.
+> Descartado: un `crond` de Alpine. Añade una imagen y una capa de
+> configuración por lo que ya da un `while true; do …; sleep 86400; done`.
 
-**Verificación.** Correr el script, abrir el `.db` generado con `sqlite3` y
-contar filas de `transactions` — deben coincidir con la base viva. Comprobar
-que tras 2 ejecuciones la poda deja solo el respaldo del día.
+**Verificado.** Conteos y sumas idénticos a la base viva, `integrity_check: ok`
+en las 7 tablas, y **simulacro de restauración completo con la app corriendo
+sobre el respaldo** → ver §2.1. El procedimiento de recuperación está documentado
+y probado.
 
----
+### A.3 Tests
 
-## Fase 1.5 — Red de seguridad sobre los cálculos
+**Problema.** Cero tests, y la lógica de mayor riesgo son funciones puras sin
+cobertura: `balance.ts` (decide el signo de cada movimiento — un error ahí
+**subvierte todos los saldos** con un síntoma de número plausible, no de crash)
+y `recurring.ts` (el umbral de varianza decide qué es suscripción).
 
-### 1.3 Tests de `balance` y `recurring`
+**Implementación.** Vitest 3, `environment: "node"`, tests en
+`src/lib/__tests__/`.
 
-**Problema.** No hay un solo test en el repo, y la lógica de mayor riesgo vive
-en funciones puras sin cobertura:
+> **Vitest 5 no funciona en Windows aquí**: usa rolldown y su binding nativo no
+> instala por el bug de optional-deps de npm. Se fijó `vitest@^3` (vite). Si en
+> la Pi falla, es esto.
 
-- `src/lib/balance.ts` — `movementFor` decide el signo de cada transacción. Un
-  error aquí **subvierte todos los saldos y todo el patrimonio neto** de la
-  app, y el síntoma es un número plausible pero equivocado, no un crash.
-- `src/lib/recurring.ts` — el coeficiente de variación decide qué se reporta
-  como suscripción. Un umbral mal aplicado marca el supermercado como
-  recurrente.
+| Suite | Tests | Qué fija |
+|---|---|---|
+| `balance` | 14 | signos, transferencias, `referenceDate`, el "undo" de `netWorthTrend` |
+| `recurring` | 12 | ambos fallos de la heurística: súpermercado no es suscripción; suscripción USD con drift de TC sí |
+| `auth` | 14 | firma, expiración, rotación de secret, password incorrecto |
+| `transactions-query` | 21 | clamping de la URL, escapado de `LIKE`, whitelist de `ORDER BY` |
 
-Ambas son funciones puras sin dependencias de DB: la mejor relación
-valor/esfuerzo que ofrece el proyecto.
+**Los tests ya han atrapado bugs reales**, antes que el navegador:
+- `DEFAULT_FILTERS` sin `dir` → la URL emitía `?dir=undefined`
+- El `PAGE_SIZE` mal calibrado del primer benchmark (§A.5)
 
-**Implementación.** Vitest (`environment: "node"`, solo lo que hay que testear
-es lógica pura; no componentes). `npm test` en modo `run`, `npm run test:watch`
-para el ciclo local. Tests colocados junto al código en `src/lib/__tests__/`.
+### A.4 Índices
 
-**Casos a cubrir en `balance`** — cada uno ata una decisión documentada en el
-código a un número esperado:
+Solo existía el PK. `budgets`, `payees` y `projects` sí lo tenían; la tabla más
+consultada era la única sin cubrir.
 
-| Caso | Por qué importa |
-|---|---|
-| Expense resta, income suma | la fórmula base |
-| Transfer: resta del origen, suma al destino | si falla, aparece dinero duplicado |
-| Transfer con `destinationAmountMinor` distinto | conversión entre monedas |
-| movements **anteriores** a `referenceDate` se ignoran | el ancla de la cuenta |
-| `netWorthTrend` reconstruye el saldo hacia atrás | si el "undo" está mal, la gráfica miente |
-| La serie de `netWorthTrend` es coherente con `currentBalances` | consistencia interna: el último punto debe ser el saldo actual |
+Elegidos **midiendo**: se replicaron las filas reales a 50 000 y se compararon
+seis juegos de índices con `EXPLAIN QUERY PLAN` sobre las queries que el código
+realmente ejecuta.
 
-**Casos a cubrir en `recurring`:**
-
-| Caso | Por qué importa |
-|---|---|
-| 3 meses con monto estable → recurrente | el camino feliz |
-| 2 meses → no es recurrente | `MIN_MONTHS` |
-| Grocery store con montos variables → **no** es recurrente | el falso positivo que motiva el umbral |
-| Suscripción USD cobrada en COP con drift de TC → **sí** es recurrente | tolerancia de FX |
-| Se ignoran ingresos y transfers | solo gastos cuentan |
-| Agrupa por payee antes que por descripción | misma compra descrita de dos formas |
-
-**Verificación.** `npm test` en verde. Los tests describen el comportamiento
-actual — si alguno falla, es un hallazgo: o el código tiene un bug, o el test
-codificó mal la regla. En ambos casos se investiga antes de "arreglar" el test.
-
----
-
-## Hallazgo nuevo (surge al escribir los tests)
-
-**`recurring.ts` y `month.ts` no coinciden en zona horaria.** `recurring.ts`
-agrupa meses con `date.toISOString().slice(0, 7)` (UTC); `month.ts` usa
-`getFullYear()`/`getMonth()` (hora local). En Colombia (UTC-5) un movimiento del
-1.º de mes a las 8 p. m. local cae en el mes **anterior** para la detección de
-recurrentes, pero en el mes correcto para el presupuesto y el dashboard. Un
-suscripción que se cobra el día 1 después de las 7 p. m. se contabiliza en dos
-meses distintos según la página donde se mire.
-
-No se corrigió aquí a propósito: cambiarlo altera los resultados de
-`/recurrentes` y merece su propio PR con tests que lo demuestren. Los tests
-nuevos usan fechas a mediodía UTC justamente para que este desajuste no se
-manifeste como un fallo falso.
-
-Los fixtures de `src/lib/__tests__/factories.ts` evitan el problema por
-construcción: mediodía UTC cae en el mismo día calendario en cualquier zona
-entre UTC-12 y UTC+12.
-
----
-
-## Fase 2 — Escalabilidad
-
-### 2.1 Índices en `transactions` — HECHO
-
-Solo existía el PK autoincremental. `budgets`, `payees` y `projects` sí lo
-tenían; la tabla más consultada era la única sin cubrir.
-
-Los índices se eligieron **midiendo**, no suponiendo: se replicaron las filas
-reales a 50 000 y se compararon seis juegos de índices con `EXPLAIN QUERY
-PLAN` sobre las queries que el código realmente ejecuta.
-
-**Migración `drizzle/0006_condemned_zzzax.sql`** (3 índices + `ANALYZE`):
+Migración `drizzle/0006_condemned_zzzax.sql` (3 índices + `ANALYZE`):
 
 | Índice | Query que sirve | 50k filas |
 |---|---|---|
-| `transactions_date_idx` | dashboard "recientes", búsqueda global | 6,0 ms → **0,02 ms** |
-| `transactions_account_date_idx` | dedup de importación (cuenta + mes) | 6,0 ms → **0,28 ms** |
-| `transactions_import_batch_idx` | deshacer una importación | 5,1 ms → **0,02 ms** |
+| `transactions_date_idx` | dashboard "recientes", búsqueda global | 6,0 → **0,02 ms** |
+| `transactions_account_date_idx` | dedup de importación (cuenta + mes) | 6,0 → **0,28 ms** |
+| `transactions_import_batch_idx` | deshacer una importación | 5,1 → **0,02 ms** |
 
-Los tres además eliminan el `USE TEMP B-TREE FOR ORDER BY` que tenían. Coste:
-+33 % de tamaño de base a 50k filas (medido); a las 1 135 filas actuales es
-irrelevante.
+Los tres eliminan además el `USE TEMP B-TREE FOR ORDER BY`. Coste: +33 % de
+tamaño a 50k; irrelevante a 1 115 filas.
 
-**Una corrección de método que vale la pena registrar.** La primera medición dio
-un resultado *contrario*: el índice `(account_id, date)` llegaba a empeorar la
-query un 40 %. La causa fue el rango de fechas del test — 1,2 años. Un extracto
-bancario es **un mes**; con el rango realista el mismo índice pasó a ser 12-20x
-más rápido. Un benchmark con un parámetro irreal puede cancelar la decisión
-equivocada.
+> **Corrección de método.** La primera medición dio lo contrario: `(account_id,
+> date)` parecía *empeorar* la query un 40 %. La causa era el rango de fechas del
+> test —1,2 años. Un extracto es **un mes**; con el rango realista el mismo
+> índice pasó a ser 12-20x más rápido. Casi se descarta el índice que más rinde.
 
-**Lo que los índices NO arreglan.** La query más cara del sistema es
-`SELECT * FROM transactions WHERE deleted_at IS NULL` (dashboard, presupuesto,
-transacciones, recurrentes, proyectos, export): **~80-113 ms a 50k filas**, y
-no mejora con ningún índice — tiene que leer todas las filas de todas formas.
-Es 10x más cara que cualquier otra query. Eso no es un problema de índices sino
-de arquitectura, y es el punto 2.2.
+**Explícitamente NO indexado:** `category_id` y `currency`. Hoy todo total se
+agrega en JS, así que ninguna query filtra por ellos a nivel SQL: el índice
+costaría escrituras y no compraría nada.
 
-**Explícitamente NO indexado:** `category_id` y `currency`. Hoy todo total de
-presupuesto y dashboard se agrega en JS, así que ninguna query filtra por ellos
-a nivel SQL — un índice ahí costaría escrituras y no compraría nada. Se
-justifica el día que el filtrado baje a SQL.
+### A.5 Paginación en SQL
 
-### 2.2 Paginación y filtrado en SQL — HECHO (parcial)
-
-**Contexto de destino:** Raspberry Pi en Docker,acceso desde cualquier dispositivo.
-Eso fija dos Costs que no existen en localhost: la CPU del Pi (débil, y con
-almacenamiento lento) y el ancho de banda (cada visita cruza la WAN).
-
-**Lo que había.** `db.select().from(transactions)` sin `where` ni `limit` en el
+**Lo que había.** `db.select().from(transactions)` sin `where` ni `limit` en
 dashboard, transacciones, recurrentes y presupuesto; el dashboard calculaba
-`netWorthTrend` recorriendo todas las transacciones × todas las cuentas en cada
-render; las tablas filtraban y paginaban en el navegador.
+`netWorthTrend` recorriendo todo × todas las cuentas en cada render.
 
-**Medición del antes, en las mismas condiciones** (build de producción, misma
-auth, misma base; código viejo extraído de `b8e4c33`, no una simulación):
+**Antes medido en condiciones idénticas** (build de producción, misma auth,
+misma base, código viejo extraído de `b8e4c33`):
 
 | | 1 115 tx | 50 188 tx |
 |---|---|---|
-| Payload `/transacciones` | 750 KB | **26,4 MB** |
+| Payload | 750 KB | **26,4 MB** |
 | gzipped | 40 KB | **1 569 KB** |
 | Latencia | 119 ms | **2 253 ms** |
 
 **Implementado en `/transacciones`:** paginación, orden y filtrado en SQL,
 accionados por la URL (`?q=&type=&account=&sort=&dir=&page=`).
 
-- `src/lib/transactions-query.ts` — lógica pura y testeable: normaliza los
-  searchParams (con *clamping*, no rechazo), y construye WHERE/ORDER BY/LIMIT.
-- `DataTable` acepta un prop `server` opcional que activa `manualSorting` /
-  `manualFiltering` / `manualPagination` de TanStack. **Las demás tablas no lo
-  usan y siguen igual** — blast radius cero.
+- `src/lib/transactions-query.ts` — lógica pura: normaliza los searchParams con
+  *clamping* (no rechazo) y construye WHERE/ORDER BY/LIMIT.
+- `DataTable` acepta un prop `server` opcional → `manualSorting` /
+  `manualFiltering` / `manualPagination`. **Las otras 5 tablas no lo usan y
+  quedan intactas.**
 - Las 3 páginas de detalle (categoría, payee, proyecto) siguen en modo cliente:
-  reciben un subconjunto ya acotado, filtrarlo en el navegador no cuesta nada y
-  evita un round-trip por tecla.
-- Splits: ahora solo se cargan los de las 50 filas en pantalla, no todos.
+  reciben un subconjunto ya acotado, así que filtrarlo en el navegador es gratis
+  y evita un round-trip por tecla.
+- Splits: solo los de las 50 filas en pantalla, no todos.
 
-**Resultado medido, misma comparación:**
+**Después, misma comparación:**
 
 | | 1 115 tx | 50 188 tx |
 |---|---|---|
@@ -282,65 +365,35 @@ accionados por la URL (`?q=&type=&account=&sort=&dir=&page=`).
 | Latencia | 119 → **57 ms** | 2 253 → **111 ms** |
 | Búsqueda | 73 → **56 ms** | 1 941 → **121 ms** |
 
-87x menos payload y 20x menos latencia a 50k. Lo decisivo no es el número
-absoluto sino que **la página 10 cuesta lo mismo que la página 1** (95 ms vs
-111 ms): el costo ya no escala con la base.
+87x menos payload, 20x menos latencia a 50k. Lo decisivo no es el número
+absoluto sino que **la página 10 cuesta lo mismo que la página 1**: el costo
+dejó de escalar con la base.
 
-**Un error de método que casi falseaba la medición.** Primeramente simulé el "antes"
-poniendo `PAGE_SIZE = 1000000`, lo que dio 5,8 MB. Eso **exageraba** la mejora:
-el código viejo tenía `pageSize={20}` en cliente, así que solo renderizaba 20
-filas y las 1 095 restantes viajaban como datos en el flight payload. Al
-reconstruir el código viejo real desde git, el "antes" correcto fue 750 KB, no
-5,8 MB. Una simulación que no reproduce el código anterior no es un "antes".
+> **Error de método.** Primero simulé el "antes" con `PAGE_SIZE = 1000000`, lo
+> que dio 5,8 MB. Eso **exageraba** la mejora: el código viejo tenía
+> `pageSize={20}` en cliente, así que solo renderizaba 20 filas y las otras
+> 1 095 viajaban como datos. Al reconstruir el código viejo real desde git, el
+> "antes" correcto fue 750 KB. Una simulación que no reproduce el código
+> anterior no es un "antes".
 
-**Tres cosas que aprendí midiendo, no suponiendo:**
+**Tres cosas que salieron de medir, no de suponer:**
+1. El markup de Tailwind es el piso real (§2.4), no los datos.
+2. Los tests atraparon el bug de `dir` antes que el navegador.
+3. `ORDER BY` no se puede parametrizar: la columna de la URL se resuelve contra
+   un whitelist y un valor desconocido cae en `date`. Testeado con un
+   `id; DROP TABLE transactions--`.
 
-1. **El markup de Tailwind es el piso real, no los datos.** 50 filas pesan
-   310 KB porque cada `<td>` repite ~85 caracteres de clases y un `<span>` de
-   badge se lleva ~640. El shell de la app son ~77 KB en cada página,
-   constante. Es el siguiente cuello de botella, y es independiente del tamaño
-   de la base.
-2. **Los tests atraparon un bug antes del navegador.** `DEFAULT_FILTERS` no
-   incluía `dir`, así que el default era `undefined` y `filtersToQueryString`
-   emitía `?dir=undefined`.
-3. **`ORDER BY` no se puede parametrizar**, así que el nombre de columna que
-   llega por la URL se resuelve contra un whitelist. Un valor desconocido cae
-   en `date` en vez de llegar al SQL. Está testeado explícitamente.
+### A.6 Bug de zona horaria
 
-**Lo que queda (pendiente, y es lo siguiente en prioridad):**
+`recurring.ts` agrupa meses con `date.toISOString()` (UTC); `month.ts` usa
+`getFullYear()`/`getMonth()` (local). En Colombia (UTC-5) un movimiento del 1.º
+después de las 7 p. m. cae en el mes **anterior** para `/recurrentes` pero en el
+correcto para dashboard y presupuesto.
 
-`/recurrentes` (621 KB, 485 ms a 50k), `/` (513 ms) y `/presupuesto` (331 ms).
-Estas tres **no se pueden paginar** — necesitan totales, no filas. El arreglo es
-empujar la agregación a SQL (`GROUP BY`), que ya no es "paginación" sino
-reescribir `spending-stats.ts` y `recurrentes` como queries de agregación.
-Ahí es donde los índices de `category_id` y `currency` del punto 2.1 empiezan a
-justificarse.
+**Medido: 0 de 1 115 transacciones (0,00 %) afectadas.** Es un bug real pero
+latente: se activa solo cuando entre un movimiento en esa franja. Ver §2.5.
 
-| 5 | Paginación en SQL | **Parcial** — `/transacciones` hecho; faltan las páginas de agregación |
-
----
-
-## Fase 3 — Producto
-
-- **README real** — esquema, decisiones de diseño, cómo respaldar y restaurar.
-- **Conversión de moneda** — tabla de tasas (manual por mes es suficiente).
-  Sin esto, "Patrimonio neto" son tres gráficas separadas.
-- **Recurrentes proyectados** — próximos meses, alertas de subida de precio,
-  generación opcional del movimiento del mes.
-- **Plantilla de presupuesto** — "copiar mes anterior", rollover visible,
-  presets.
-- **Importador CSV/XLSX genérico** como fallback al parser de PDF, que hoy
-  solo entiende Bancolombia.
-- **Adjuntar receipts** a transacciones.
-
----
-
-## Orden de ejecución
-
-1. ~~**1.1 Auth**~~ — **hecho**. `src/proxy.ts` + login + guard en actions.
-2. ~~**1.2 Backups**~~ — **hecho**. `VACUUM INTO` + servicio `backup`.
-3. ~~**1.3 Tests**~~ — **hecho**. 40 tests en verde.
-4. ~~2.1 Índices~~ — **hecho**. 3 índices, migration `0006`.
-5. 2.2 Paginación SQL — ~1 día. **El cuello de botella real**: 80-113 ms por
-   carga de página a 50k filas, sin arreglo posible con índices.
-6. 3. Producto — cuando la base esté firme.
+Los fixtures de `src/lib/__tests__/factories.ts` evitan el problema por
+construcción: mediodía UTC cae en el mismo día calendario en cualquier zona
+entre UTC-12 y UTC+12, así que el test no puede fallar por la zona horaria de
+la máquina que lo corre.
