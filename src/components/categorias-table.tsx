@@ -15,7 +15,7 @@ import { BulkDeleteButton } from "@/components/data-table/bulk-delete-button";
 import { CategoryFormDialog } from "@/components/category-form-dialog";
 import { BulkEditCategoriesDialog } from "@/components/bulk-edit-categories-dialog";
 import { DeleteButton } from "@/components/delete-button";
-import { bulkDeleteCategories, deleteCategory } from "@/app/categorias/actions";
+import { bulkDeleteCategories, deleteCategory } from "@/app/(app)/categorias/actions";
 import type { categories } from "@/db/schema";
 
 type Category = typeof categories.$inferSelect;

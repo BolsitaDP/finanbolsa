@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { BulkEditDialog } from "@/components/data-table/bulk-edit-dialog";
 import { BulkEditSelectField } from "@/components/data-table/bulk-edit-field";
-import { bulkUpdateRules, type BulkRulePatch } from "@/app/reglas/actions";
+import { bulkUpdateRules, type BulkRulePatch } from "@/app/(app)/reglas/actions";
 
 export function BulkEditRulesDialog({ ids, trigger }: { ids: number[]; trigger: React.ReactElement }) {
   const [enabledFieldOn, setEnabledFieldOn] = useState(false);

@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ProjectFormDialog } from "@/components/project-form-dialog";
 import { DeleteButton } from "@/components/delete-button";
-import { archiveProject, unarchiveProject, deleteProject } from "@/app/proyectos/actions";
+import { archiveProject, unarchiveProject, deleteProject } from "@/app/(app)/proyectos/actions";
 import { formatDate, formatMoney } from "@/lib/format";
 
 const PROJECT_TYPES: Record<string, string> = { project: "Proyecto", trip: "Viaje" };

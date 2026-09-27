@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { TransactionFormDialog } from "@/components/transaction-form-dialog";
 import { TransaccionesTable } from "@/components/transacciones-table";
 import { groupSplitsByTransaction } from "@/lib/splits";
-import { getAllProjectNames } from "@/app/proyectos/actions";
+import { getAllProjectNames } from "@/app/(app)/proyectos/actions";
 
 export default async function TransaccionesPage({
   searchParams,

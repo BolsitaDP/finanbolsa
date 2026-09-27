@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { BulkEditDialog } from "@/components/data-table/bulk-edit-dialog";
 import { BulkEditSelectField } from "@/components/data-table/bulk-edit-field";
-import { bulkUpdateCategories, type BulkCategoryPatch } from "@/app/categorias/actions";
+import { bulkUpdateCategories, type BulkCategoryPatch } from "@/app/(app)/categorias/actions";
 import { CATEGORY_KINDS, CATEGORY_STATUSES, type CategoryKind, type CategoryStatus } from "@/lib/enums";
 
 type Category = { id: string; name: string };

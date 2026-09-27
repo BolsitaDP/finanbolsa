@@ -21,7 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Combobox } from "@/components/ui/combobox";
 import { CategorySelect } from "@/components/category-select";
 
-import { createRule, previewRuleMatches, updateRule, type RulePreviewSample } from "@/app/reglas/actions";
+import { createRule, previewRuleMatches, updateRule, type RulePreviewSample } from "@/app/(app)/reglas/actions";
 import {
   OPS_BY_FIELD,
   RULE_FIELDS,

@@ -9,3 +9,29 @@ services:
       - ./data:/app/data
     environment:
       - DATABASE_URL=/app/data/finanbolsa.db
+      # Required. Without these the app serves /login but rejects every
+      # attempt — it will not boot-fail, so check the container log if you
+      # can't get in.
+      - AUTH_PASSWORD=${AUTH_PASSWORD:?AUTH_PASSWORD no definido}
+      - AUTH_SECRET=${AUTH_SECRET:?AUTH_SECRET no definido}
+      # Set to "true" only when serving over HTTPS; a Secure cookie is
+      # silently dropped by the browser on a plain-http LAN address, and
+      # login becomes impossible.
+      - FINANBOLSA_HTTPS=${FINANBOLSA_HTTPS:-false}
+
+  backup:
+    build: .
+    restart: unless-stopped
+    # Same image as `web` so the backup sees the identical schema and the same
+    # node_modules (tsx is a devDependency, kept in the runtime stage on
+    # purpose). A dedicated cron image would add a layer and a build for one
+    # command that runs once a day.
+    command: >
+      sh -c 'while true; do
+        npm run db:backup;
+        sleep 86400;
+      done'
+    volumes:
+      - ./data:/app/data
+    environment:
+      - DATABASE_URL=/app/data/finanbolsa.db

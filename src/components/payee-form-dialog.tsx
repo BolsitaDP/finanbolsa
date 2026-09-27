@@ -26,7 +26,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { CategorySelect } from "@/components/category-select";
 
-import { createPayee, updatePayee } from "@/app/payees/actions";
+import { createPayee, updatePayee } from "@/app/(app)/payees/actions";
 
 const schema = z.object({
   name: z.string().min(1, "Requerido"),

@@ -8,7 +8,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { DeleteButton } from "@/components/delete-button";
-import { deleteImportBatch } from "@/app/importar/actions";
+import { deleteImportBatch } from "@/app/(app)/importar/actions";
 import { formatDate } from "@/lib/format";
 
 type ImportBatch = {

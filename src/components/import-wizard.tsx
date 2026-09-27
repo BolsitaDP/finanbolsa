@@ -29,7 +29,7 @@ import { BulkActionsBar } from "@/components/data-table/bulk-actions-bar";
 import { ImportBulkEditDialog, type ImportGroupPatch } from "@/components/import-bulk-edit-dialog";
 import { CategorySelect } from "@/components/category-select";
 
-import { bulkImportTransactions, parseStatement } from "@/app/importar/actions";
+import { bulkImportTransactions, parseStatement } from "@/app/(app)/importar/actions";
 import type { ParsedGroup } from "@/lib/import-types";
 import { TRANSACTION_TYPES, TRANSACTION_TYPE_LABELS, type Currency, type TransactionType } from "@/lib/enums";
 import { formatMoney } from "@/lib/format";

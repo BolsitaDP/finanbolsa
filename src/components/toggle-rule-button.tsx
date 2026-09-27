@@ -4,7 +4,7 @@ import { useTransition } from "react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
-import { toggleRuleEnabled } from "@/app/reglas/actions";
+import { toggleRuleEnabled } from "@/app/(app)/reglas/actions";
 
 export function ToggleRuleButton({ id, enabled }: { id: number; enabled: boolean }) {
   const [isPending, startTransition] = useTransition();

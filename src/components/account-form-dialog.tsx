@@ -26,7 +26,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Combobox } from "@/components/ui/combobox";
 
-import { createAccount, updateAccount } from "@/app/cuentas/actions";
+import { createAccount, updateAccount } from "@/app/(app)/cuentas/actions";
 import { ACCOUNT_STATUSES, ACCOUNT_TYPES, CURRENCIES } from "@/lib/enums";
 import { fromDateInputValue, toDateInputValue } from "@/lib/date-input";
 

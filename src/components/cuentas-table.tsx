@@ -16,7 +16,7 @@ import { AccountFormDialog } from "@/components/account-form-dialog";
 import { BulkEditAccountsDialog } from "@/components/bulk-edit-accounts-dialog";
 import { DeleteButton } from "@/components/delete-button";
 import { formatDate, formatMoney } from "@/lib/format";
-import { bulkDeleteAccounts, deleteAccount } from "@/app/cuentas/actions";
+import { bulkDeleteAccounts, deleteAccount } from "@/app/(app)/cuentas/actions";
 import type { accounts } from "@/db/schema";
 
 type Account = typeof accounts.$inferSelect;

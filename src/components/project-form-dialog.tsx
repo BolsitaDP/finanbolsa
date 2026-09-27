@@ -26,7 +26,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Combobox } from "@/components/ui/combobox";
 
-import { createProject, updateProject } from "@/app/proyectos/actions";
+import { createProject, updateProject } from "@/app/(app)/proyectos/actions";
 import { toDateInputValue, fromDateInputValue } from "@/lib/date-input";
 
 const PROJECT_TYPES = { project: "Proyecto", trip: "Viaje" } as const;

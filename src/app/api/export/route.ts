@@ -1,8 +1,16 @@
 import type { NextRequest } from "next/server";
 
 import { buildCsvExport, buildJsonExport, buildXlsxExport } from "@/lib/export";
+import { isAuthenticated } from "@/lib/auth-session";
 
 export async function GET(request: NextRequest) {
+  // The proxy already 401s unauthenticated /api requests, but this endpoint
+  // hands over the entire financial history in one file, so it re-checks
+  // rather than trusting a single layer.
+  if (!(await isAuthenticated())) {
+    return Response.json({ error: "No autenticado" }, { status: 401 });
+  }
+
   const format = request.nextUrl.searchParams.get("format") ?? "json";
   const timestamp = new Date().toISOString().slice(0, 10);
 

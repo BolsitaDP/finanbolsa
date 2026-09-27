@@ -26,7 +26,7 @@ import { monthlyAmounts, monthKey } from "@/lib/spending-stats";
 import { monthLabel } from "@/lib/month";
 import { groupSplitsByTransaction, buildAllocations } from "@/lib/splits";
 import { formatDate, formatMoney } from "@/lib/format";
-import { getAllProjectNames } from "@/app/proyectos/actions";
+import { getAllProjectNames } from "@/app/(app)/proyectos/actions";
 
 export default async function CategoryDetailPage({
   params,

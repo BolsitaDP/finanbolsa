@@ -11,7 +11,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { Combobox } from "@/components/ui/combobox";
 
-import { updateSettings } from "@/app/configuracion/actions";
+import { updateSettings } from "@/app/(app)/configuracion/actions";
 import { CURRENCIES } from "@/lib/enums";
 import { fromDateInputValue, toDateInputValue } from "@/lib/date-input";
 

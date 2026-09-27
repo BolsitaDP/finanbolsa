@@ -2,11 +2,6 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
-import { AppSidebar } from "@/components/app-sidebar";
-import { GlobalSearch } from "@/components/global-search";
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { Separator } from "@/components/ui/separator";
 import { Toaster } from "@/components/ui/sonner";
 
 const geistSans = Geist({
@@ -24,6 +19,12 @@ export const metadata: Metadata = {
   description: "Finanzas personales",
 };
 
+/**
+ * Deliberately just the document shell. The authenticated chrome (sidebar,
+ * header, global search) lives in `src/app/(app)/layout.tsx` instead, so that
+ * /login renders without it — a login form wrapped in the app's navigation is
+ * both confusing and a hint that the session already exists.
+ */
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
@@ -31,23 +32,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        <TooltipProvider>
-          <SidebarProvider>
-            <AppSidebar />
-            <SidebarInset>
-              <header className="flex h-14 items-center gap-2 border-b px-4">
-                <SidebarTrigger />
-                <Separator orientation="vertical" className="h-4" />
-                <span className="text-sm font-medium">FinanBolsa</span>
-                <div className="ml-auto">
-                  <GlobalSearch />
-                </div>
-              </header>
-              <main className="flex-1 p-6">{children}</main>
-            </SidebarInset>
-          </SidebarProvider>
-          <Toaster />
-        </TooltipProvider>
+        {children}
+        <Toaster />
       </body>
     </html>
   );

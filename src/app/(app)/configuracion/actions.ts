@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 
 import { db } from "@/db";
 import { accounts, budgets, categories, payees, rules, settings, transactions } from "@/db/schema";
+import { assertAuthenticated } from "@/lib/auth-session";
 import type { Currency } from "@/lib/enums";
 
 type SettingsInput = {
@@ -15,6 +16,7 @@ type SettingsInput = {
 };
 
 export async function updateSettings(input: SettingsInput) {
+  await assertAuthenticated();
   await db.update(settings).set(input).where(eq(settings.id, "default"));
   revalidatePath("/configuracion");
   revalidatePath("/presupuesto");
@@ -33,6 +35,7 @@ function revalidateEverything() {
 }
 
 export async function resetTransactions() {
+  await assertAuthenticated();
   const rows = await db.select({ id: transactions.id }).from(transactions);
   await db.delete(transactions);
   revalidateEverything();
@@ -40,6 +43,7 @@ export async function resetTransactions() {
 }
 
 export async function resetBudgets() {
+  await assertAuthenticated();
   const rows = await db.select({ id: budgets.id }).from(budgets);
   await db.delete(budgets);
   revalidateEverything();
@@ -47,6 +51,7 @@ export async function resetBudgets() {
 }
 
 export async function resetRules() {
+  await assertAuthenticated();
   const rows = await db.select({ id: rules.id }).from(rules);
   await db.delete(rules);
   revalidateEverything();
@@ -54,6 +59,7 @@ export async function resetRules() {
 }
 
 export async function resetPayees() {
+  await assertAuthenticated();
   const rows = await db.select({ id: payees.id }).from(payees);
   await db.update(transactions).set({ payeeId: null });
   await db.delete(payees);
@@ -62,6 +68,7 @@ export async function resetPayees() {
 }
 
 export async function resetCategories() {
+  await assertAuthenticated();
   const rows = await db.select({ id: categories.id }).from(categories);
   await db.update(transactions).set({ categoryId: null });
   await db.update(payees).set({ defaultCategoryId: null });
@@ -73,6 +80,7 @@ export async function resetCategories() {
 }
 
 export async function resetAccounts() {
+  await assertAuthenticated();
   const rows = await db.select({ id: accounts.id }).from(accounts);
   await db.delete(transactions); // accountId is NOT NULL, can't survive an orphaned reference
   await db.delete(accounts);
@@ -82,6 +90,7 @@ export async function resetAccounts() {
 
 /** Wipes everything except accounts and settings, in FK-safe order. */
 export async function resetAllExceptAccounts() {
+  await assertAuthenticated();
   const [txRows, budgetRows, ruleRows, payeeRows, categoryRows] = await Promise.all([
     db.select({ id: transactions.id }).from(transactions),
     db.select({ id: budgets.id }).from(budgets),

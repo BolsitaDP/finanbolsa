@@ -17,7 +17,7 @@ import { TransactionFormDialog } from "@/components/transaction-form-dialog";
 import { BulkEditTransactionsDialog } from "@/components/bulk-edit-transactions-dialog";
 import { DeleteButton } from "@/components/delete-button";
 import { formatDate, formatMoney } from "@/lib/format";
-import { bulkSoftDeleteTransactions, softDeleteTransaction } from "@/app/transacciones/actions";
+import { bulkSoftDeleteTransactions, softDeleteTransaction } from "@/app/(app)/transacciones/actions";
 import type { transactions, transactionSplits } from "@/db/schema";
 
 type Account = { id: string; name: string; currency: string };

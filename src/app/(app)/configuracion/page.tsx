@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { SettingsForm } from "@/components/settings-form";
 import { DangerZone } from "@/components/danger-zone";
 import { ImportHistoryCard } from "@/components/import-history-card";
-import { getImportBatches } from "@/app/importar/actions";
+import { getImportBatches } from "@/app/(app)/importar/actions";
 import {
   resetAccounts,
   resetAllExceptAccounts,

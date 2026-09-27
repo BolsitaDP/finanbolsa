@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { PlayIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { applyRulesToTransactions } from "@/app/reglas/actions";
+import { applyRulesToTransactions } from "@/app/(app)/reglas/actions";
 
 export function ApplyRulesButton() {
   const [isPending, startTransition] = useTransition();

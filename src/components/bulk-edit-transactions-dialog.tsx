@@ -8,7 +8,7 @@ import {
   BulkEditSelectField,
   BulkEditTextField,
 } from "@/components/data-table/bulk-edit-field";
-import { bulkUpdateTransactions, type BulkTransactionPatch } from "@/app/transacciones/actions";
+import { bulkUpdateTransactions, type BulkTransactionPatch } from "@/app/(app)/transacciones/actions";
 import { TRANSACTION_TYPES, TRANSACTION_TYPE_LABELS, type TransactionType } from "@/lib/enums";
 import { projectTripItems } from "@/lib/project-options";
 

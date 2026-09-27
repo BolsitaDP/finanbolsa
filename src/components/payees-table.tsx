@@ -15,7 +15,7 @@ import { BulkDeleteButton } from "@/components/data-table/bulk-delete-button";
 import { PayeeFormDialog } from "@/components/payee-form-dialog";
 import { BulkEditPayeesDialog } from "@/components/bulk-edit-payees-dialog";
 import { DeleteButton } from "@/components/delete-button";
-import { bulkDeletePayees, deletePayee } from "@/app/payees/actions";
+import { bulkDeletePayees, deletePayee } from "@/app/(app)/payees/actions";
 import type { categories, payees } from "@/db/schema";
 
 type Payee = typeof payees.$inferSelect;

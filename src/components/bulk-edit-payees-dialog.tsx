@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { BulkEditDialog } from "@/components/data-table/bulk-edit-dialog";
 import { BulkEditCategoryField } from "@/components/data-table/bulk-edit-field";
-import { bulkUpdatePayees, type BulkPayeePatch } from "@/app/payees/actions";
+import { bulkUpdatePayees, type BulkPayeePatch } from "@/app/(app)/payees/actions";
 
 type Category = { id: string; name: string; kind: string; parentCategoryId: string | null };
 

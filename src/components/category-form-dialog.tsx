@@ -26,7 +26,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Combobox } from "@/components/ui/combobox";
 
-import { createCategory, updateCategory } from "@/app/categorias/actions";
+import { createCategory, updateCategory } from "@/app/(app)/categorias/actions";
 import { CATEGORY_KINDS, CATEGORY_STATUSES } from "@/lib/enums";
 
 const schema = z.object({

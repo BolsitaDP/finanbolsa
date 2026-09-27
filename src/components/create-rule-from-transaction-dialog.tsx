@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Combobox } from "@/components/ui/combobox";
 import { CategorySelect } from "@/components/category-select";
 
-import { createRuleFromTransaction } from "@/app/reglas/actions";
+import { createRuleFromTransaction } from "@/app/(app)/reglas/actions";
 import { cleanMerchantName } from "@/lib/merchant";
 
 type Category = { id: string; name: string; kind: string; parentCategoryId: string | null };

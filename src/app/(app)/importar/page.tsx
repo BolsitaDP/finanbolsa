@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { accounts, categories, payees } from "@/db/schema";
 import { ImportWizard } from "@/components/import-wizard";
 import { ImportHistoryCard } from "@/components/import-history-card";
-import { getAllProjectNames } from "@/app/proyectos/actions";
+import { getAllProjectNames } from "@/app/(app)/proyectos/actions";
 import { getImportBatches } from "./actions";
 
 // Reads live data with no dynamic API to force Next to treat it as such —

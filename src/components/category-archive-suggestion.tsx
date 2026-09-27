@@ -7,7 +7,7 @@ import { ArchiveIcon, TriangleAlertIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 
-import { bulkUpdateCategories } from "@/app/categorias/actions";
+import { bulkUpdateCategories } from "@/app/(app)/categorias/actions";
 
 export function CategoryArchiveSuggestion({
   categoryId,

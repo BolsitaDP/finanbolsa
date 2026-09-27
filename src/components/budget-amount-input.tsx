@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
 import { Input } from "@/components/ui/input";
-import { setBudgetAmount } from "@/app/presupuesto/actions";
+import { setBudgetAmount } from "@/app/(app)/presupuesto/actions";
 
 export function BudgetAmountInput({
   categoryId,

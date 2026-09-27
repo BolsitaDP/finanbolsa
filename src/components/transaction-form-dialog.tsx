@@ -29,7 +29,7 @@ import { Input } from "@/components/ui/input";
 import { Combobox } from "@/components/ui/combobox";
 import { CategorySelect } from "@/components/category-select";
 
-import { createTransaction, updateTransaction, type SplitInput } from "@/app/transacciones/actions";
+import { createTransaction, updateTransaction, type SplitInput } from "@/app/(app)/transacciones/actions";
 import { CreateRuleFromTransactionDialog } from "@/components/create-rule-from-transaction-dialog";
 import { CURRENCIES, TRANSACTION_TYPES, TRANSACTION_TYPE_LABELS } from "@/lib/enums";
 import { toDateTimeInputValue } from "@/lib/date-input";

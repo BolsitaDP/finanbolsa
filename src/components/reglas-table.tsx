@@ -14,7 +14,7 @@ import { RuleFormDialog } from "@/components/rule-form-dialog";
 import { BulkEditRulesDialog } from "@/components/bulk-edit-rules-dialog";
 import { DeleteButton } from "@/components/delete-button";
 import { ToggleRuleButton } from "@/components/toggle-rule-button";
-import { bulkDeleteRules, deleteRule } from "@/app/reglas/actions";
+import { bulkDeleteRules, deleteRule } from "@/app/(app)/reglas/actions";
 import type { accounts, categories, payees, rules } from "@/db/schema";
 
 type Rule = typeof rules.$inferSelect;

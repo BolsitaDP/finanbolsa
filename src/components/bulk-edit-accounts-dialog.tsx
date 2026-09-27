@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { BulkEditDialog } from "@/components/data-table/bulk-edit-dialog";
 import { BulkEditSelectField } from "@/components/data-table/bulk-edit-field";
-import { bulkUpdateAccounts, type BulkAccountPatch } from "@/app/cuentas/actions";
+import { bulkUpdateAccounts, type BulkAccountPatch } from "@/app/(app)/cuentas/actions";
 import { ACCOUNT_STATUSES, ACCOUNT_TYPES, CURRENCIES, type AccountStatus, type AccountType, type Currency } from "@/lib/enums";
 
 export function BulkEditAccountsDialog({ ids, trigger }: { ids: string[]; trigger: React.ReactElement }) {

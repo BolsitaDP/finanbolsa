@@ -20,7 +20,7 @@ import { ProjectFormDialog } from "@/components/project-form-dialog";
 import { MonthlyTrendChart } from "@/components/monthly-trend-chart";
 import { TransaccionesTable } from "@/components/transacciones-table";
 import { CHART_COLORS } from "@/components/net-worth-chart";
-import { getAllProjectNames } from "@/app/proyectos/actions";
+import { getAllProjectNames } from "@/app/(app)/proyectos/actions";
 import { formatDate, formatMoney } from "@/lib/format";
 import { monthKey, monthlyAmounts } from "@/lib/spending-stats";
 import { groupSplitsByTransaction } from "@/lib/splits";
