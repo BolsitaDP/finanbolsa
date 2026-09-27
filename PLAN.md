@@ -10,8 +10,8 @@
 | 1 | Sin autenticación | **Hecho** — `src/proxy.ts` + login + guard en actions |
 | 2 | Sin backups automáticos | **Hecho** — `VACUUM INTO` + servicio `backup` en compose |
 | 3 | Tests de `balance` y `recurring` | **Hecho** — 40 tests en verde |
-| 4 | Sin índices en `transactions` | Pendiente — 15 min |
-| 5 | Todo en memoria, filtrado en cliente | Pendiente — ~1 día |
+| 4 | Sin índices en `transactions` | **Hecho** — 3 índices, medidos a 50k filas |
+| 5 | Todo en memoria, filtrado en cliente | **Parcial** — /transacciones hecho |
 | 6 | README de `create-next-app` | Pendiente — 30 min |
 | 7 | Sin conversión de moneda | Pendiente — ~1 día |
 | 8 | Recurrentes read-only | Pendiente — ~4 h |
@@ -200,28 +200,123 @@ entre UTC-12 y UTC+12.
 
 ## Fase 2 — Escalabilidad
 
-### 2.1 Índices en `transactions`
+### 2.1 Índices en `transactions` — HECHO
 
-Solo existe el PK autoincremental. Todas las queries filtran por `currency`,
-`date`, `category_id`, `account_id`, `deleted_at`, pero ninguna tiene índice.
-`budgets`, `payees` y `projects` sí lo tienen — la tabla más consultada es la
-única sin cubrir.
+Solo existía el PK autoincremental. `budgets`, `payees` y `projects` sí lo
+tenían; la tabla más consultada era la única sin cubrir.
 
-Índices propuestos: `date`, `(account_id, date)`, `(category_id, date)`,
-`(import_batch_id)`, y un índice parcial `WHERE deleted_at IS NULL` (la
-condición que aparece en casi todas las queries).
+Los índices se eligieron **midiendo**, no suponiendo: se replicaron las filas
+reales a 50 000 y se compararon seis juegos de índices con `EXPLAIN QUERY
+PLAN` sobre las queries que el código realmente ejecuta.
 
-Migración drizzle nueva + `ANALYZE`. Medir antes/después con `EXPLAIN QUERY PLAN`.
+**Migración `drizzle/0006_condemned_zzzax.sql`** (3 índices + `ANALYZE`):
 
-### 2.2 Paginación y filtrado en SQL
+| Índice | Query que sirve | 50k filas |
+|---|---|---|
+| `transactions_date_idx` | dashboard "recientes", búsqueda global | 6,0 ms → **0,02 ms** |
+| `transactions_account_date_idx` | dedup de importación (cuenta + mes) | 6,0 ms → **0,28 ms** |
+| `transactions_import_batch_idx` | deshacer una importación | 5,1 ms → **0,02 ms** |
 
-`db.select().from(transactions)` sin `where` ni `limit` está en el dashboard,
-transacciones, recurrentes y presupuesto. El dashboard calcula
-`netWorthTrend` recorriendo todas las transacciones × todas las cuentas, en
-cada render. Las tablas filtran y paginan en el cliente.
+Los tres además eliminan el `USE TEMP B-TREE FOR ORDER BY` que tenían. Coste:
++33 % de tamaño de base a 50k filas (medido); a las 1 135 filas actuales es
+irrelevante.
 
-Migrar a filtros y paginación en SQL vía `searchParams`. Beneficio doble:
-escala, y las URLs pasan a ser compartibles y enlazables.
+**Una corrección de método que vale la pena registrar.** La primera medición dio
+un resultado *contrario*: el índice `(account_id, date)` llegaba a empeorar la
+query un 40 %. La causa fue el rango de fechas del test — 1,2 años. Un extracto
+bancario es **un mes**; con el rango realista el mismo índice pasó a ser 12-20x
+más rápido. Un benchmark con un parámetro irreal puede cancelar la decisión
+equivocada.
+
+**Lo que los índices NO arreglan.** La query más cara del sistema es
+`SELECT * FROM transactions WHERE deleted_at IS NULL` (dashboard, presupuesto,
+transacciones, recurrentes, proyectos, export): **~80-113 ms a 50k filas**, y
+no mejora con ningún índice — tiene que leer todas las filas de todas formas.
+Es 10x más cara que cualquier otra query. Eso no es un problema de índices sino
+de arquitectura, y es el punto 2.2.
+
+**Explícitamente NO indexado:** `category_id` y `currency`. Hoy todo total de
+presupuesto y dashboard se agrega en JS, así que ninguna query filtra por ellos
+a nivel SQL — un índice ahí costaría escrituras y no compraría nada. Se
+justifica el día que el filtrado baje a SQL.
+
+### 2.2 Paginación y filtrado en SQL — HECHO (parcial)
+
+**Contexto de destino:** Raspberry Pi en Docker,acceso desde cualquier dispositivo.
+Eso fija dos Costs que no existen en localhost: la CPU del Pi (débil, y con
+almacenamiento lento) y el ancho de banda (cada visita cruza la WAN).
+
+**Lo que había.** `db.select().from(transactions)` sin `where` ni `limit` en el
+dashboard, transacciones, recurrentes y presupuesto; el dashboard calculaba
+`netWorthTrend` recorriendo todas las transacciones × todas las cuentas en cada
+render; las tablas filtraban y paginaban en el navegador.
+
+**Medición del antes, en las mismas condiciones** (build de producción, misma
+auth, misma base; código viejo extraído de `b8e4c33`, no una simulación):
+
+| | 1 115 tx | 50 188 tx |
+|---|---|---|
+| Payload `/transacciones` | 750 KB | **26,4 MB** |
+| gzipped | 40 KB | **1 569 KB** |
+| Latencia | 119 ms | **2 253 ms** |
+
+**Implementado en `/transacciones`:** paginación, orden y filtrado en SQL,
+accionados por la URL (`?q=&type=&account=&sort=&dir=&page=`).
+
+- `src/lib/transactions-query.ts` — lógica pura y testeable: normaliza los
+  searchParams (con *clamping*, no rechazo), y construye WHERE/ORDER BY/LIMIT.
+- `DataTable` acepta un prop `server` opcional que activa `manualSorting` /
+  `manualFiltering` / `manualPagination` de TanStack. **Las demás tablas no lo
+  usan y siguen igual** — blast radius cero.
+- Las 3 páginas de detalle (categoría, payee, proyecto) siguen en modo cliente:
+  reciben un subconjunto ya acotado, filtrarlo en el navegador no cuesta nada y
+  evita un round-trip por tecla.
+- Splits: ahora solo se cargan los de las 50 filas en pantalla, no todos.
+
+**Resultado medido, misma comparación:**
+
+| | 1 115 tx | 50 188 tx |
+|---|---|---|
+| Payload | 750 → **329 KB** | 26,4 MB → **310 KB** |
+| gzipped | 40 → **17 KB** | 1 569 → **15 KB** |
+| Latencia | 119 → **57 ms** | 2 253 → **111 ms** |
+| Búsqueda | 73 → **56 ms** | 1 941 → **121 ms** |
+
+87x menos payload y 20x menos latencia a 50k. Lo decisivo no es el número
+absoluto sino que **la página 10 cuesta lo mismo que la página 1** (95 ms vs
+111 ms): el costo ya no escala con la base.
+
+**Un error de método que casi falseaba la medición.** Primeramente simulé el "antes"
+poniendo `PAGE_SIZE = 1000000`, lo que dio 5,8 MB. Eso **exageraba** la mejora:
+el código viejo tenía `pageSize={20}` en cliente, así que solo renderizaba 20
+filas y las 1 095 restantes viajaban como datos en el flight payload. Al
+reconstruir el código viejo real desde git, el "antes" correcto fue 750 KB, no
+5,8 MB. Una simulación que no reproduce el código anterior no es un "antes".
+
+**Tres cosas que aprendí midiendo, no suponiendo:**
+
+1. **El markup de Tailwind es el piso real, no los datos.** 50 filas pesan
+   310 KB porque cada `<td>` repite ~85 caracteres de clases y un `<span>` de
+   badge se lleva ~640. El shell de la app son ~77 KB en cada página,
+   constante. Es el siguiente cuello de botella, y es independiente del tamaño
+   de la base.
+2. **Los tests atraparon un bug antes del navegador.** `DEFAULT_FILTERS` no
+   incluía `dir`, así que el default era `undefined` y `filtersToQueryString`
+   emitía `?dir=undefined`.
+3. **`ORDER BY` no se puede parametrizar**, así que el nombre de columna que
+   llega por la URL se resuelve contra un whitelist. Un valor desconocido cae
+   en `date` en vez de llegar al SQL. Está testeado explícitamente.
+
+**Lo que queda (pendiente, y es lo siguiente en prioridad):**
+
+`/recurrentes` (621 KB, 485 ms a 50k), `/` (513 ms) y `/presupuesto` (331 ms).
+Estas tres **no se pueden paginar** — necesitan totales, no filas. El arreglo es
+empujar la agregación a SQL (`GROUP BY`), que ya no es "paginación" sino
+reescribir `spending-stats.ts` y `recurrentes` como queries de agregación.
+Ahí es donde los índices de `category_id` y `currency` del punto 2.1 empiezan a
+justificarse.
+
+| 5 | Paginación en SQL | **Parcial** — `/transacciones` hecho; faltan las páginas de agregación |
 
 ---
 
@@ -242,9 +337,10 @@ escala, y las URLs pasan a ser compartibles y enlazables.
 
 ## Orden de ejecución
 
-1. **1.1 Auth** — horas. Elimina el riesgo de perder todo por un click.
-2. **1.2 Backups** — una hora. Un `VACUUM INTO` y un servicio.
-3. **1.3 Tests** — un par de horas. Protege los números.
-4. 2.1 Índices — 15 min. Evita una cirugía futura.
-5. 2.2 Paginación SQL — un día.
+1. ~~**1.1 Auth**~~ — **hecho**. `src/proxy.ts` + login + guard en actions.
+2. ~~**1.2 Backups**~~ — **hecho**. `VACUUM INTO` + servicio `backup`.
+3. ~~**1.3 Tests**~~ — **hecho**. 40 tests en verde.
+4. ~~2.1 Índices~~ — **hecho**. 3 índices, migration `0006`.
+5. 2.2 Paginación SQL — ~1 día. **El cuello de botella real**: 80-113 ms por
+   carga de página a 50k filas, sin arreglo posible con índices.
 6. 3. Producto — cuando la base esté firme.

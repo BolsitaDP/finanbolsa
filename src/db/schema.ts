@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { sqliteTable, text, integer, real, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, uniqueIndex, index } from "drizzle-orm/sqlite-core";
 import type { RuleCondition, RuleAction } from "@/lib/rules-types";
 
 // --- accounts -------------------------------------------------------------
@@ -65,34 +65,55 @@ export const importBatches = sqliteTable("import_batches", {
 
 // --- transactions -----------------------------------------------------------
 // type: expense | income | transfer
-export const transactions = sqliteTable("transactions", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  date: integer("date", { mode: "timestamp" }).notNull(),
-  type: text("type").notNull(),
-  accountId: text("account_id")
-    .notNull()
-    .references(() => accounts.id),
-  destinationAccountId: text("destination_account_id").references(() => accounts.id),
-  amountMinor: real("amount_minor").notNull(),
-  currency: text("currency").notNull(),
-  destinationAmountMinor: real("destination_amount_minor"),
-  destinationCurrency: text("destination_currency"),
-  categoryId: text("category_id").references(() => categories.id),
-  payeeId: text("payee_id").references(() => payees.id),
-  description: text("description"),
-  projectTrip: text("project_trip"),
-  notes: text("notes"),
-  // Null for manually-entered transactions and anything imported before this
-  // feature existed — only rows created by one import run carry a batch.
-  importBatchId: integer("import_batch_id").references(() => importBatches.id),
-  createdAt: integer("created_at", { mode: "timestamp" })
-    .notNull()
-    .default(sql`(unixepoch())`),
-  updatedAt: integer("updated_at", { mode: "timestamp" })
-    .notNull()
-    .default(sql`(unixepoch())`),
-  deletedAt: integer("deleted_at", { mode: "timestamp" }),
-});
+//
+// Indexes below were chosen by benchmarking every query the app actually runs
+// against this table at 50k rows, not by guessing. The winners are `date`
+// (lets the dashboard's "recent N" and the global search walk date-descending
+// and stop early instead of sorting the whole table) and
+// `(account_id, date)` (the import dedup, which reads one account over one
+// statement month). `(import_batch_id)` exists purely so undoing an import
+// doesn't scan the table.
+//
+// Deliberately NOT indexed: `category_id` and `currency`. Every budget and
+// dashboard total is aggregated in JS today, so no query filters on them at
+// the SQL level — an index there would cost writes and buy nothing. They become
+// worth adding the day filtering moves into SQL.
+export const transactions = sqliteTable(
+  "transactions",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    date: integer("date", { mode: "timestamp" }).notNull(),
+    type: text("type").notNull(),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => accounts.id),
+    destinationAccountId: text("destination_account_id").references(() => accounts.id),
+    amountMinor: real("amount_minor").notNull(),
+    currency: text("currency").notNull(),
+    destinationAmountMinor: real("destination_amount_minor"),
+    destinationCurrency: text("destination_currency"),
+    categoryId: text("category_id").references(() => categories.id),
+    payeeId: text("payee_id").references(() => payees.id),
+    description: text("description"),
+    projectTrip: text("project_trip"),
+    notes: text("notes"),
+    // Null for manually-entered transactions and anything imported before this
+    // feature existed — only rows created by one import run carry a batch.
+    importBatchId: integer("import_batch_id").references(() => importBatches.id),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .default(sql`(unixepoch())`),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .notNull()
+      .default(sql`(unixepoch())`),
+    deletedAt: integer("deleted_at", { mode: "timestamp" }),
+  },
+  (t) => [
+    index("transactions_date_idx").on(t.date),
+    index("transactions_account_date_idx").on(t.accountId, t.date),
+    index("transactions_import_batch_idx").on(t.importBatchId),
+  ]
+);
 
 // --- transaction splits -----------------------------------------------------------
 // Optional breakdown of one expense transaction into specific sub-expenses —

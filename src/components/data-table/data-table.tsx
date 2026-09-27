@@ -55,6 +55,7 @@ export function DataTable<TData, TValue>({
   emptyMessage = "Sin resultados.",
   initialSorting,
   storageKey,
+  server,
 }: {
   columns: ColumnDef<TData, TValue>[];
   data: TData[];
@@ -68,12 +69,34 @@ export function DataTable<TData, TValue>({
   // the chosen columns to localStorage so they survive a page reload. Pass a
   // name unique per table (e.g. "transacciones").
   storageKey?: string;
+  /**
+   * Opt in to server-side sorting/filtering/pagination.
+   *
+   * Tables that omit this keep filtering, sorting and paging in the browser
+   * over the full `data` array, which is right for the small reference tables
+   * (accounts, categories, payees, rules — dozens of rows at most). A table
+   * that outgrows the payload passes `server` and keeps only the current page
+   * in `data`, letting the URL drive what the server sends.
+   */
+  server?: {
+    totalRows: number;
+    sorting: SortingState;
+    onSortingChange: (sorting: SortingState) => void;
+    pageIndex: number;
+    onPageIndexChange: (pageIndex: number) => void;
+  };
 }) {
   const [sorting, setSorting] = React.useState<SortingState>(initialSorting ?? []);
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([]);
   const [globalFilter, setGlobalFilter] = React.useState("");
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({});
+  // Server mode is driven entirely by the URL, so TanStack's own state for
+  // those three concerns is bypassed. The local state above still exists
+  // (TanStack requires the keys) but is never the source of truth.
+  const sortingState = server ? server.sorting : sorting;
+  const setSortingState = server ? server.onSortingChange : setSorting;
+  const pageIndex = server ? server.pageIndex : undefined;
   // Guards against writing back the default {} state before the persisted
   // value (loaded async-ish, on mount) has had a chance to apply — without
   // this, that first write would immediately clobber whatever was saved.
@@ -107,8 +130,18 @@ export function DataTable<TData, TValue>({
   const table = useReactTable({
     data,
     columns: allColumns,
-    state: { sorting, columnFilters, globalFilter, rowSelection, columnVisibility },
-    onSortingChange: setSorting,
+    state: {
+      sorting: sortingState,
+      columnFilters,
+      globalFilter,
+      rowSelection,
+      columnVisibility,
+      ...(pageIndex !== undefined ? { pagination: { pageIndex, pageSize } } : {}),
+    },
+    onSortingChange: (updater) => {
+      const next = typeof updater === "function" ? updater(sortingState) : updater;
+      setSortingState(next);
+    },
     onColumnFiltersChange: setColumnFilters,
     onGlobalFilterChange: setGlobalFilter,
     onRowSelectionChange: setRowSelection,
@@ -121,12 +154,25 @@ export function DataTable<TData, TValue>({
     getPaginationRowModel: getPaginationRowModel(),
     globalFilterFn: "includesString",
     initialState: { pagination: { pageSize } },
+    // In server mode the row models must not re-filter/sort/paginate what the
+    // server already did — that would paginate a single page of 50 into
+    // "page 6 of 1" nonsense. The `manual*` flags are TanStack's supported
+    // way to say "this is handled upstream".
+    manualSorting: !!server,
+    manualFiltering: !!server,
+    manualPagination: !!server,
+    pageCount: server ? Math.max(1, Math.ceil(server.totalRows / pageSize)) : undefined,
     // TanStack Table defaults to resetting to page 0 whenever `data` gets a
     // new array reference — which happens after every edit here, since a
     // mutation revalidates the server data and the page re-renders with a
     // freshly fetched array. Without this, editing a row while on page 6
     // would silently bounce you back to page 1.
     autoResetPageIndex: false,
+    // `autoResetRowSelection` is deliberately left at its default (true). In
+    // server mode `data` IS the current page, so a page change or a new filter
+    // hands TanStack a fresh array and stale selections are dropped — which is
+    // what we want, since those selections would otherwise be applied by
+    // index to whatever rows now occupy them.
   });
 
   const selectedRows = table.getSelectedRowModel().rows.map((r) => r.original);
@@ -187,7 +233,12 @@ export function DataTable<TData, TValue>({
           </TableBody>
         </Table>
       </div>
-      <DataTablePagination table={table} />
+      <DataTablePagination
+        table={table}
+        totalRows={server?.totalRows}
+        pageSize={server ? pageSize : undefined}
+        pageIndex={pageIndex}
+      />
     </div>
   );
 }

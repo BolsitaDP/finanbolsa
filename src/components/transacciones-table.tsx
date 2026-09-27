@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { ArrowRightIcon, PencilIcon, SplitIcon } from "lucide-react";
 
@@ -17,6 +18,12 @@ import { TransactionFormDialog } from "@/components/transaction-form-dialog";
 import { BulkEditTransactionsDialog } from "@/components/bulk-edit-transactions-dialog";
 import { DeleteButton } from "@/components/delete-button";
 import { formatDate, formatMoney } from "@/lib/format";
+import {
+  filtersToQueryString,
+  PAGE_SIZE,
+  type TransactionFilters,
+  type TransactionSort,
+} from "@/lib/transactions-query";
 import { bulkSoftDeleteTransactions, softDeleteTransaction } from "@/app/(app)/transacciones/actions";
 import type { transactions, transactionSplits } from "@/db/schema";
 
@@ -57,7 +64,8 @@ export function TransaccionesTable({
   categories,
   payees,
   projectNames,
-  initialSearch,
+  filters,
+  totalRows,
   splitsByTx,
 }: {
   transactions: Transaction[];
@@ -65,14 +73,42 @@ export function TransaccionesTable({
   categories: Category[];
   payees: Payee[];
   projectNames: string[];
-  initialSearch?: string;
+  /**
+   * Current view, parsed from the URL by the server. Supply these (via
+   * `totalRows`) for the main list, which pages in the database. Omit them on
+   * the per-category / per-payee / per-project detail pages: those hand over an
+   * already-narrowed set, so filtering it again in the browser costs nothing
+   * and avoids a round-trip per keystroke.
+   */
+  filters?: TransactionFilters;
+  totalRows?: number;
   splitsByTx?: Map<number, TransactionSplit[]>;
 }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const serverMode = filters !== undefined && totalRows !== undefined;
+
+  // Every filter and sort change is a URL change. The server re-queries and
+  // the page re-renders, so there is exactly one source of truth for what the
+  // table shows and any view is shareable.
+  const navigate = React.useCallback(
+    (next: Partial<TransactionFilters>) => {
+      if (!filters) return;
+      const merged = { ...filters, ...next };
+      // Any change other than paging invalidates the current offset.
+      if (next.page === undefined) merged.page = 1;
+      router.push(`${pathname}${filtersToQueryString(merged)}`, { scroll: false });
+    },
+    [filters, pathname, router]
+  );
+
   const accountName = React.useMemo(() => new Map(accounts.map((a) => [a.id, a.name])), [accounts]);
   const categoryName = React.useMemo(() => new Map(categories.map((c) => [c.id, c.name])), [categories]);
   const categoryKind = React.useMemo(() => new Map(categories.map((c) => [c.id, c.kind])), [categories]);
   const payeeName = React.useMemo(() => new Map(payees.map((p) => [p.id, p.name])), [payees]);
 
+  // Rows arrive already filtered, sorted and paginated by the server, so this
+  // is a straight projection — no client-side filter step.
   const rows: Row[] = React.useMemo(
     () =>
       transactions.map((tx) => {
@@ -106,21 +142,44 @@ export function TransaccionesTable({
     [transactions, accountName, categoryName, categoryKind, payeeName, splitsByTx]
   );
 
-  const [search, setSearch] = React.useState(initialSearch ?? "");
-  const [typeFilter, setTypeFilter] = React.useState("all");
-  const [accountFilter, setAccountFilter] = React.useState("all");
+  // Debounced so typing a word doesn't fire a server round-trip per keystroke
+  // — which on a Raspberry Pi over a WAN link is the difference between snappy
+  // and unusable. The input stays controlled and local; the URL catches up.
+  const urlSearch = filters?.q ?? "";
+  const [searchDraft, setSearchDraft] = React.useState(urlSearch);
+  const [lastUrlSearch, setLastUrlSearch] = React.useState(urlSearch);
+  // Adjusting state during render (React's documented pattern for state that
+  // must track a prop) rather than in an effect: when the URL changes — browser
+  // back button, or the global search jumping to /transacciones?q=… — the
+  // input has to adopt the new value before paint. Doing it in an effect would
+  // show a stale term for a frame and trigger a cascading re-render.
+  if (urlSearch !== lastUrlSearch) {
+    setLastUrlSearch(urlSearch);
+    setSearchDraft(urlSearch);
+  }
+  React.useEffect(() => {
+    if (!serverMode || searchDraft === urlSearch) return;
+    const timer = setTimeout(() => navigate({ q: searchDraft }), 300);
+    return () => clearTimeout(timer);
+  }, [searchDraft, urlSearch, navigate, serverMode]);
 
-  const filteredRows = React.useMemo(() => {
+  // Client-mode-only filters, for the detail pages that pass a pre-narrowed set.
+  const [localSearch, setLocalSearch] = React.useState("");
+  const [localType, setLocalType] = React.useState("all");
+  const [localAccount, setLocalAccount] = React.useState("all");
+
+  const visibleRows = React.useMemo(() => {
+    if (serverMode) return rows;
     return rows.filter((r) => {
-      if (typeFilter !== "all" && r.type !== typeFilter) return false;
-      if (accountFilter !== "all" && r.accountId !== accountFilter) return false;
-      if (search) {
+      if (localType !== "all" && r.type !== localType) return false;
+      if (localAccount !== "all" && r.accountId !== localAccount) return false;
+      if (localSearch) {
         const haystack = `${r.payeeOrDescriptionLabel} ${r.categoryName ?? ""} ${r.accountLabel}`.toLowerCase();
-        if (!haystack.includes(search.toLowerCase())) return false;
+        if (!haystack.includes(localSearch.toLowerCase())) return false;
       }
       return true;
     });
-  }, [rows, search, typeFilter, accountFilter]);
+  }, [rows, serverMode, localSearch, localType, localAccount]);
 
   const columns: ColumnDef<Row>[] = React.useMemo(
     () => [
@@ -252,12 +311,30 @@ export function TransaccionesTable({
   return (
     <DataTable
       columns={columns}
-      data={filteredRows}
-      initialSorting={[{ id: "date", desc: true }]}
-      pageSize={20}
+      data={visibleRows}
+      pageSize={serverMode ? PAGE_SIZE : 20}
       getRowId={(row) => String(row.raw.id)}
       emptyMessage="No hay transacciones que coincidan."
       storageKey="transacciones"
+      initialSorting={serverMode ? undefined : [{ id: "date", desc: true }]}
+      server={
+        serverMode
+          ? {
+              totalRows,
+              pageIndex: filters.page - 1,
+              onPageIndexChange: (index) => navigate({ page: index + 1 }),
+              sorting: [{ id: filters.sort, desc: filters.dir === "desc" }],
+              onSortingChange: (next) => {
+                const first = next[0];
+                if (!first?.id) return;
+                navigate({
+                  sort: first.id as TransactionSort,
+                  dir: first.desc ? "desc" : "asc",
+                });
+              },
+            }
+          : undefined
+      }
       bulkToolbar={(selected, clear) => {
         const ids = selected.map((r) => r.raw.id);
         return (
@@ -286,16 +363,24 @@ export function TransaccionesTable({
       }}
       toolbar={() => (
         <div className="flex flex-wrap items-center gap-2">
-          <DataTableSearchInput value={search} onChange={setSearch} placeholder="Buscar payee, categoría..." />
+          <DataTableSearchInput
+            value={serverMode ? searchDraft : localSearch}
+            onChange={serverMode ? setSearchDraft : setLocalSearch}
+            placeholder="Buscar payee, categoría..."
+          />
           <Combobox
-            value={typeFilter}
-            onValueChange={(v) => setTypeFilter(v || "all")}
+            value={serverMode ? filters.type : localType}
+            onValueChange={(v) =>
+              serverMode
+                ? navigate({ type: (v || "all") as TransactionFilters["type"] })
+                : setLocalType(v || "all")
+            }
             items={{ all: "Todos los tipos", ...TYPE_LABELS }}
             className="w-[160px]"
           />
           <Combobox
-            value={accountFilter}
-            onValueChange={(v) => setAccountFilter(v || "all")}
+            value={serverMode ? filters.account : localAccount}
+            onValueChange={(v) => (serverMode ? navigate({ account: v || "all" }) : setLocalAccount(v || "all"))}
             items={{ all: "Todas las cuentas", ...Object.fromEntries(accounts.map((a) => [a.id, a.name])) }}
             className="w-[180px]"
           />

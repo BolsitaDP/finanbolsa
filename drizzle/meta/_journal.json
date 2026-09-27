@@ -43,6 +43,13 @@
       "when": 1787273650026,
       "tag": "0005_famous_vengeance",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1790474214215,
+      "tag": "0006_condemned_zzzax",
+      "breakpoints": true
     }
   ]
 }
