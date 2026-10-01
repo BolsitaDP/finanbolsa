@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, isNull, like, or, sql, type SQL } from "drizzle-orm";
 
 import { accounts, categories, payees, transactions } from "@/db/schema";
-import { transactionMonth } from "@/lib/month-sql";
+import { monthInRange } from "@/lib/month-sql";
 import { TRANSACTION_TYPES, type TransactionType } from "@/lib/enums";
 
 /**
@@ -200,10 +200,16 @@ export function buildTransactionQuery(filters: TransactionFilters): TransactionQ
   }
 
   if (filters.month !== "all") {
-    // `transactionMonth`, not a hand-rolled strftime: the month a total was
+    // `monthInRange`, not `eq(transactionMonth, ...)`: the month a total was
     // counted in has to be the same month this filter selects, or "auditar este
-    // número" would show a different set of rows than the number came from.
-    conditions.push(eq(transactionMonth, filters.month));
+    // número" would show a different set of rows than the number came from — and
+    // both agree because both bucket in local time.
+    //
+    // A range rather than a `strftime` equality because the equality cannot use
+    // `transactions_date_idx`: SQLite cannot invert the function, so every
+    // "auditar este total" click was reading the whole table. The bounds come from
+    // `monthRange()`, which is the same definition of month as `monthKey()`.
+    conditions.push(monthInRange(filters.month));
   }
 
   if (filters.q) {

@@ -4,8 +4,9 @@ import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
 import { db } from "@/db";
-import { accounts, budgets, categories, payees, rules, settings, transactions } from "@/db/schema";
+import { accounts, budgets, categories, payees, rules, transactions } from "@/db/schema";
 import { assertAuthenticated } from "@/lib/auth-session";
+import { saveSettings } from "@/lib/settings-store";
 import type { Currency } from "@/lib/enums";
 
 type SettingsInput = {
@@ -17,7 +18,7 @@ type SettingsInput = {
 
 export async function updateSettings(input: SettingsInput) {
   await assertAuthenticated();
-  await db.update(settings).set(input).where(eq(settings.id, "default"));
+  await saveSettings(input);
   revalidatePath("/configuracion");
   revalidatePath("/presupuesto");
 }

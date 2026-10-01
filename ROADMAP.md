@@ -845,12 +845,69 @@ Esa comparación es la que encontró dos bugs reales:
 
 Effort **L**, hecho. Ver `PLAN.md` §A.5.
 
-### 4.2 Una sola definición de "mes" — PARCIAL
+### 4.2 Una sola definición de "mes" — HECHO, y el filtro tenía un coste escondido
 
 `monthKey()` (hora local) ya es la referencia y `src/lib/month-sql.ts` la
-reproduce en SQL, así que las agregaciones y las páginas coinciden. Lo que queda
-es que `detectRecurring` usaba UTC — corregido en 4.1 — y que el bucketing
-esté repartido en tres archivos en vez de uno. Effort **S** restante.
+reproduce en SQL. Effort **S** restante según el texto original: "que el bucketing
+esté repartido en tres archivos en vez de uno".
+
+**Lo que salió al cerrarlo no era eso.** Al perfilar se encontró que
+`transactionMonth` —`strftime('%Y-%m', date, 'unixepoch', 'localtime')`— se usaba
+**en el `WHERE`**, y eso hace dos cosas malas:
+
+1. **No puede usar un índice.** SQLite no sabe invertir una función, así que
+   `strftime(...) = '2026-09'` produce `SCAN transactions`: las 50 000 filas
+   enteras. `transactions_date_idx` existe, está puesto desde la migración `0006`,
+   y **no se estaba usando en ningún filtro por mes del app**. Con un rango de
+   fechas: `SEARCH transactions USING INDEX transactions_date_idx (date>? AND
+   date<?)`.
+2. `movementByAccountAndMonth` iba peor: su filtro estaba en la consulta
+   **externa**, sobre una columna que las subconsultas acababan de calcular, donde
+   ningún índice puede actuar nunca.
+
+El arreglo son los límites del mes calculados en JavaScript (`monthRange`), porque
+la medianoche local del día 1 depende de la zona horaria del proceso y SQLite no la
+conoce. El *agrupamiento* sigue usando `strftime` —ahí la función no tiene
+alternativa y no cuesta nada— así que el bucketing continúa siendo uno solo, y los
+dos lados usan hora local.
+
+Medido con `bench:seed` a 50 000 filas, sobre el build de producción:
+
+| Agregado | Antes | Después | |
+|---|---|---|---|
+| `spendByPayeeInMonth` (×2) | 73 ms | **3 ms** | 24× |
+| `totalsByMonth` | 121 ms | **15 ms** | 8× |
+| `spendByCategoryByMonth` (7 meses) | 111 ms | **38 ms** | 3× |
+| `movementByAccountAndMonth` (12 meses) | 201 ms | **100 ms** | 2× |
+
+Y en la página, con **cinco tarjetas nuevas** respecto a cuando se midieron los
+118 ms de §4.1:
+
+| Página | Ayer | Hoy |
+|---|---|---|
+| `/` | 760 ms | **214 ms** |
+
+**De dónde salía el 760 ms, que es la parte incómoda de esta entrada:** la tarjeta
+de integridad (§3.3) que se había añadido el mismo día traía *todos* los
+movimientos y todos los splits al dashboard y comparaba fechas en JavaScript —
+justo el escaneo de tabla que `aggregates.ts` existe para evitar, deshecho por una
+comprobación que en una base sana no encuentra nada. Reescrita como dos consultas
+que devuelven **solo las filas que fallan** (`SCAN` sin payload en vez de 50 000
+filas en memoria): 760 → 315 ms, y después el arreglo del filtro por mes → 214 ms.
+
+La lección general, y vale más que las cifras: **una comprobación de integridad mal
+diseñada es un regresor de rendimiento.** La idea "traer los datos y revisarlos en
+JS" es intuitiva y aquí costó un 6,4×. La forma correcta es dejar que la base
+devuelva las excepciones.
+
+**Verificado, no supuesto:** los tests de paridad de `aggregates.ts` se corrieron
+contra una copia de la base de 50 000 filas y confirman que el filtro por rango
+devuelve exactamente lo mismo que el de `strftime`, mes por mes y categoría por
+categoría. Los dos que siguen fallando con datos sintéticos (`currentBalances` y
+`netWorthTrendFromMonthly`) no usan filtro de mes: es deriva de coma flotante al
+sumar 50 000 `real` en SQL contra un bucle en JS
+(`-2672495155.749991` contra `-2672495155.75`). Con el libro real, de 1 115 filas,
+pasan.
 
 ### 4.3 Tests al resto de la lógica — HECHO (4 de 5)
 

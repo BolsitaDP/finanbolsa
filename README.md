@@ -11,16 +11,21 @@ multi-tenancy, ni cuentas de usuario, ni nada que lo justifique.
 - Node 22 (o el Dockerfile incluido, que ya lo trae)
 - SQLite, vía `better-sqlite3` (compila un addon nativo)
 
-## Puesta en marcha
+## Puesta en marcha (en tu máquina)
 
 ```bash
 npm install
-cp .env.example .env.local     # y rellena AUTH_PASSWORD y AUTH_SECRET
+npm run env:init               # genera .env con un AUTH_SECRET aleatorio
 npm run db:migrate
 npm run dev
 ```
 
 Abre <http://localhost:3000>. Te va a pedir la contraseña.
+
+> **El archivo se llama `.env`, no `.env.local`.** Es el nombre que leen Next y
+> Docker por igual. La versión anterior de este README decía `.env.local`; con ese
+> nombre el `docker compose up` falla con `AUTH_PASSWORD no definido` sin más
+> explicación, porque compose nunca leyó ese archivo.
 
 ### Variables de entorno
 
@@ -40,6 +45,7 @@ Abre <http://localhost:3000>. Te va a pedir la contraseña.
 
 | Comando | Qué hace |
 |---|---|
+| `npm run env:init` | Genera `.env` con un `AUTH_SECRET` aleatorio. No sobreescribe uno existente sin `--force` (rotar el secreto cierra las sesiones activas) |
 | `npm run dev` | Servidor de desarrollo |
 | `npm run build` / `start` | Build y arranque de producción |
 | `npm test` | Suite de tests (207) |
@@ -58,30 +64,115 @@ empezar de cero o para una demo.
 
 ## Docker (Raspberry Pi)
 
-```bash
-echo "AUTH_PASSWORD=..." >> .env
-echo "AUTH_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")" >> .env
-echo "FINANBOLSA_HTTPS=false" >> .env
+### Primer despliegue, en orden
 
-docker compose up -d --build
+```bash
+git clone <tu-repo> finanbolsa && cd finanbolsa
+npm run env:init                    # genera .env con un secreto aleatorio
+$EDITOR .env                        # ponle la contraseña a AUTH_PASSWORD
+./deploy.sh
 ```
 
-Dos servicios: `web` y `backup`. El contenedor corre las migraciones y luego
-arranca. El volumen es `./data` en el host, así que la base sobrevive a
+`deploy.sh` hace el trabajo completo y **no reporta éxito hasta que el contenedor
+está sano**: construye, arranca las migraciones, espera el healthcheck e imprime
+la URL. Si algo falla, dice qué mirar y da el comando de rollback. Un script de
+despliegue que dice "listo" y miente es peor que uno que no existe.
+
+Los pasos que hace, por si prefieres hacerlos a mano:
+
+```bash
+docker compose up -d --build
+docker compose ps                   # espera a "healthy"
+docker compose logs -f web          # si no levanta
+```
+
+Servicios: `web` y `backup`. El contenedor corre `npm run db:migrate` antes de
+arrancar, así que **desplegar una versión con migraciones nuevas es el mismo
+comando de siempre**. El volumen es `./data` en el host: la base sobrevive a los
 rebuilds.
 
-> **La imagen es arm64 y se compila en el Pi.** `better-sqlite3` es un addon
-> nativo; cross-compilar desde x86 no es soportado aquí. El `Dockerfile` lo dice
-> también, pero conviene saberlo antes de perder media hora intentando.
+### Actualizar
+
+```bash
+./deploy.sh
+```
+
+Trae `master`, reconstruye y revalida. No hay nada en la Pi que mire GitHub por
+su cuenta, así que nada llega a producción hasta que lo ejecutas tú.
+
+**Si una migración nueva rompe la app**, el rollback es volver al commit anterior
+y reconstruir. Las migraciones de drizzle no tienen `down`, así que "deshacer" la
+migración significa restaurar un backup:
+
+```bash
+docker compose down
+git checkout -            # deshace el pull
+./deploy.sh               # el código viejo no usa las tablas nuevas
+# y si la base quedó en mal estado:
+#   docker compose stop web
+#   cp data/backups/finanbolsa-AAAA-MM-DD.db data/finanbolsa.db
+#   rm -f data/finanbolsa.db-wal data/finanbolsa.db-shm
+#   docker compose run --rm web npm run db:migrate
+#   docker compose up -d web
+```
 
 ### Acceder desde otro dispositivo
 
-El compose publica el puerto 3000 en la LAN. Entra por la IP del Pi. Sin HTTPS,
-a propósito: en una red de casa, un certificado autofirmado solo produce
-advertencias y no protege de nada el tráfico que no sale de tu router.
+El compose publica el puerto 3000 en la LAN (configurable con `PUERTO` en `.env`).
+Entra por la IP del Pi.
 
-Si algún día lo expones fuera de casa, eso deja de ser aceptable: ahí sí hacen
-falta HTTPS y una contraseña bastante más fuerte.
+Sin HTTPS a propósito: en una red de casa un certificado autofirmado solo produce
+advertencias y no protege nada del tráfico que no sale del tu router. **Desde
+fuera de casa sí hace falta** — ahí la cookie de sesión viaja en claro y cualquiera
+en el camino puede leerla.
+
+### HTTPS
+
+Opt-in, con Caddy y certificado automático. Necesitas un dominio propio apuntando
+a la Pi y los puertos 80/443 libres.
+
+```bash
+# en .env
+DOMAIN=finanzas.ejemplo.com
+ACME_EMAIL=tu@correo.com
+FINANBOLSA_HTTPS=true
+```
+
+```bash
+docker compose --profile https up -d
+```
+
+**Verifica esto una vez montado:** entra sin sesión y comprueba que el navegador
+te lleva a `https://tu-dominio/login` y **no** a `http://localhost:3000/login`.
+La redirección la arma `src/proxy.ts` a partir de la URL de la petición, así que
+si Caddy no reenvía el `Host` original acabarías en un `localhost` que no existe
+desde fuera. El `Caddyfile` ya incluye `header_up Host {host}` como red de
+seguridad, pero es el único punto del despliegue que no se puede comprobar sin
+desplegarlo.
+
+> Mientras uses el perfil `https`, el puerto 3000 sigue publicado: quien esté en
+> la LAN puede saltarse el certificado. Si prefieres cerrarlo, quita el bloque
+> `ports` del servicio `web` en `docker-compose.yml`.
+
+> **La imagen es arm64 y se compila en el Pi.** `better-sqlite3` es un addon
+> nativo y no se cross-compila desde x86. En una Pi 5 o 4 va directo; en una
+> Zero/1 (armv6/armv7) `node:22-bookworm-slim` no arranca y hace falta otra base.
+
+### Cuando algo va mal
+
+```bash
+docker compose ps                    # ¿está healthy?
+docker compose logs --tail=50 web    # el log va a la consola: migraciones y errores
+docker compose down                  # parar sin borrar ./data
+```
+
+Tres fallos que se ven bien y no dicen nada útil:
+
+| Síntoma | Causa |
+|---|---|
+| `/login` carga pero no acepta la contraseña | falta `AUTH_PASSWORD` en `.env` |
+| No acepta la contraseña y estás en `http://` de la LAN | `FINANBOLSA_HTTPS=true` sin HTTPS: el navegador descarta la cookie `Secure` |
+| El deploy dice que está bien y al abrir no hay nada | con el healthcheck esto ya no pasa; si ocurre, `docker compose ps` dirá `unhealthy` |
 
 ## Datos y respaldo
 

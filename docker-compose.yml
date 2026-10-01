@@ -3,7 +3,7 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${PUERTO:-3000}:3000"
     volumes:
       # SQLite file persists on the host across container rebuilds/updates.
       - ./data:/app/data
@@ -12,12 +12,31 @@ services:
       # Required. Without these the app serves /login but rejects every
       # attempt — it will not boot-fail, so check the container log if you
       # can't get in.
-      - AUTH_PASSWORD=${AUTH_PASSWORD:?AUTH_PASSWORD no definido}
-      - AUTH_SECRET=${AUTH_SECRET:?AUTH_SECRET no definido}
+      - AUTH_PASSWORD=${AUTH_PASSWORD:?AUTH_PASSWORD no definido — ejecuta "npm run env:init"}
+      - AUTH_SECRET=${AUTH_SECRET:?AUTH_SECRET no definido — ejecuta "npm run env:init"}
       # Set to "true" only when serving over HTTPS; a Secure cookie is
       # silently dropped by the browser on a plain-http LAN address, and
       # login becomes impossible.
       - FINANBOLSA_HTTPS=${FINANBOLSA_HTTPS:-false}
+    # Why this exists: `docker compose up -d` returns the moment the container
+    # is *created*, not when the app is listening. Without a healthcheck a
+    # deploy script has no honest way to say "listo" — it either sleeps an
+    # arbitrary number of seconds and hopes, or reports success for a
+    # container that is crash-looping.
+    #
+    # /login rather than "/": the root redirects to /login for an
+    # unauthenticated request, which is a 307 and would read as unhealthy. It
+    # also proves the whole chain is up — proxy, Next, and SQLite opened by
+    # the page — and not just that a port is bound.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      # Generous: on a Pi the first request after a cold start pays for the
+      # page's own queries, and 30s of start_period avoids restarting a
+      # container that is merely slow.
+      start_period: 45s
+      retries: 3
 
   backup:
     build: .
@@ -35,3 +54,44 @@ services:
       - ./data:/app/data
     environment:
       - DATABASE_URL=/app/data/finanbolsa.db
+
+  # HTTPS con certificado automático, listo pero opt-in:
+  #   docker compose --profile https up -d
+  # Requiere un dominio propio apuntando a la Pi (LAN o WAN) y puertos 80/443
+  # libres. Ver README §HTTPS para el paso a paso y para la trampa del Host.
+  #
+  # NO se activa por defecto a propósito: sin dominio, Caddy no puede emitir un
+  # certificado y el contenedor entra en un ciclo de reintentos que se ve como
+  # un despliegue roto.
+  caddy:
+    profiles: ["https"]
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      # El dominio, que el Caddyfile lee como `{$DOMAIN}` para emitir el
+      # certificado.
+      #
+      # **Sin `:?` a propósito.** Compose interpola las variables de TODOS los
+      # servicios antes de aplicar el filtro de perfiles, así que un required
+      # variable aquí hace fallar hasta `docker compose up` sin el perfil
+      # https — es decir, rompe el despliegue normal para poder validar un
+      # despliegue opcional. Con el valor por defecto vacío, activar el perfil
+      # sin definir DOMAIN lo reporta el propio Caddy al arrancar, que es el
+      # sitio donde el mensaje puede ser útil.
+      - DOMAIN=${DOMAIN:-}
+      - ACME_EMAIL=${ACME_EMAIL:-}
+
+volumes:
+  caddy_data:
+  caddy_config:
+

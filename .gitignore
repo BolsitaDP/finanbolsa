@@ -47,6 +47,11 @@ yarn-error.log*
 # scratch dir used by db:verify-backup to restore a copy without touching the
 # live database
 /data/restore-test/
+# The whole directory, not just the known names: the 50k-row benchmark database
+# lives here too, and so does any scratch database created while testing a
+# fresh install. `data/` is the one directory the container mounts as a volume,
+# so anything left in it belongs to the host, not to the repo.
+/data/*
 
 # typescript
 *.tsbuildinfo

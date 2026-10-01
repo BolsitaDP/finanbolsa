@@ -30,8 +30,9 @@ import { findMovementsBeforeReference, findOversplitTransactions } from "@/lib/l
 import { netWorthTrendFromMonthly } from "@/lib/balance";
 import {
   currentBalances,
-  loadIntegrityInput,
   movementByAccountAndMonth,
+  movementsBeforeReference,
+  oversplitTransactions,
   spendByCategoryByMonth,
   spendByPayeeInMonth,
   totalsByMonth,
@@ -89,7 +90,8 @@ export default async function DashboardPage() {
     spendByMonth,
     payeesThisMonth,
     payeesLastMonth,
-    integrity,
+    beforeReference,
+    oversplits,
   ] = await Promise.all([
     db.select().from(accounts),
     db.select().from(categories),
@@ -107,11 +109,14 @@ export default async function DashboardPage() {
     // Dos GROUP BY más para el ranking de comercios, uno por mes.
     spendByPayeeInMonth(currentMonth),
     spendByPayeeInMonth(lastMonth),
-    // Y una pasada de integridad: los saldos son derivados, así que un dato
-    // inconsistente no da error, da un número que no es el real. Solo se calcula
-    // en el inicio —es una revisión, no algo que haya que recalcular mientras
-    // alguien escribe— y no rinde tarjeta cuando no encuentra nada.
-    loadIntegrityInput(),
+    // Y las dos revisiones de integridad: los saldos son derivados, así que un
+    // dato inconsistente no da error, da un número que no es el real. Cada una
+    // devuelve **solo las filas que fallan**, que en una base sana es ninguna —
+    // la primera versión traía los 50.000 movimientos y subió el inicio de
+    // 118 ms a 760 ms, deshaciendo aggregates.ts por una comprobación que no
+    // encuentra nada.
+    movementsBeforeReference(),
+    oversplitTransactions(),
   ]);
 
   const forMonth = (month: string) =>
@@ -121,37 +126,24 @@ export default async function DashboardPage() {
   const spendThisMonth = forMonth(currentMonth);
   const spendLastMonth = forMonth(lastMonth);
 
-  // Los hallazgos de integridad se calculan una vez y se pasan ya resueltos: el
-  // agrupamiento por movimiento necesita saber los splits de cada transacción,
-  // y hacerlo en el componente obligaría a traerlos todos otra vez.
-  const splitsByTransaction = new Map<number, { amountMinor: number }[]>();
-  for (const split of integrity.splits) {
-    const list = splitsByTransaction.get(split.transactionId) ?? [];
-    list.push({ amountMinor: split.amountMinor });
-    splitsByTransaction.set(split.transactionId, list);
-  }
-  const transactionsById = new Map(integrity.movements.map((m) => [m.id, m]));
+  // Las consultas traen solo los casos que fallan, así que aquí no hay nada que
+  // reducir: se agrupan por cuenta y se ordenan, y nada más.
   const integrityFindings = {
-    beforeReference: findMovementsBeforeReference(integrity.accounts, integrity.movements),
+    beforeReference: findMovementsBeforeReference(
+      [...new Map(beforeReference.map((m) => [m.accountId, {
+        id: m.accountId, name: m.accountName, referenceDate: m.referenceDate,
+      }])).values()],
+      beforeReference
+    ),
     oversplits: findOversplitTransactions(
-      [...splitsByTransaction.keys()].flatMap((transactionId) => {
-        const parent = transactionsById.get(transactionId);
-        const splits = splitsByTransaction.get(transactionId) ?? [];
-        // Sin el movimiento padre no hay con qué comparar, y un split huérfano
-        // apuntaría a nada: la FK lo previene, pero un borrado manual dejaría
-        // datos que no se pueden ni mostrar ni arreglar.
-        if (!parent || splits.length === 0) return [];
-        return [
-          {
-            transactionId,
-            currency: parent.currency,
-            date: parent.date,
-            description: parent.description,
-            parentAmount: parent.amountMinor,
-            splits,
-          },
-        ];
-      })
+      oversplits.map((row) => ({
+        transactionId: row.transactionId,
+        currency: row.currency,
+        date: row.date,
+        description: row.description,
+        parentAmount: row.parentAmount,
+        splits: [{ amountMinor: row.splitTotal }],
+      }))
     ),
   };
 

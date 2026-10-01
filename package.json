@@ -16,6 +16,7 @@
     "db:seed": "tsx src/db/scripts/seed.ts",
     "db:backup": "tsx src/db/scripts/backup.ts",
     "db:verify-backup": "tsx src/db/scripts/verify-backup.ts",
+    "env:init": "node env-init.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "bench:seed": "node bench-seed.mjs",

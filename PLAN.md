@@ -16,13 +16,13 @@
 |---|------|--------|
 | 1 | Autenticación | **Hecho** — `src/proxy.ts`, login, guard en actions |
 | 2 | Backups automáticos | **Hecho** — `VACUUM INTO` + servicio `backup` + simulacro de restauración probado |
-| 3 | Tests de la lógica de cálculo | **Hecho** — 360 tests en verde (1 depende del ledger real) |
+| 3 | Tests de la lógica de cálculo | **Hecho** — 367 tests en verde (1 depende del ledger real) |
 | 4 | Índices en `transactions` | **Hecho** — 3 índices, medidos a 50k filas |
 | 5 | Paginación y filtrado en SQL | **Hecho** — `/transacciones` con URL como estado; el resto son agregados |
-| 6 | Agregación en SQL | **Hecho** — `src/lib/aggregates.ts`, 3,5× en `/` a 50k filas |
+| 6 | Agregación en SQL | **Hecho** — `aggregates.ts` + filtro de mes indexable, `/` a 214 ms a 50k filas |
 | 7 | Verificación de los números | **Hecho** — tarjeta de integridad: splits que exceden y movimientos previos a la referencia |
 | 8 | Producto (comparaciones, recurrentes, captura) | **Parcial** — ver `ROADMAP.md` §1–2 |
-| 9 | Despliegue en la Pi | **Pendiente** — ver §3. Es lo que más importa ahora |
+| 9 | Despliegue en la Pi | **Listo** — falta probarlo en la Pi (§3.6) |
 
 > **Sobre las páginas de agregación (antes "parcial"):** no se van a paginar, y
 > no hace falta. `/`, `/cuentas`, `/presupuesto` y `/recurrentes` no muestran
@@ -92,7 +92,7 @@ El `-wal`/`-shm` se borran porque pueden contener páginas más nuevas que
 pisarían el respaldo restaurado.
 
 
-### 2.2 Despliegue en la Pi — §3 · **lo único que queda de esta lista**
+### 2.2 Despliegue en la Pi — §3 · preparado, sin probar en la Pi
 
 ### 2.3 Agregación en SQL para las páginas de totales — HECHO
 
@@ -146,33 +146,56 @@ local) y `transactionMonth` (su equivalente en SQL). Ver `ROADMAP.md` §3.1.
 
 ## 3. Despliegue en la Pi
 
-### 3.1 Pendiente: HTTPS
+### 3.1 HTTPS — LISTO, opt-in
 
-Hoy `docker-compose.yml` publica `3000:3000` y la cookie de sesión viaja **en
-claro**. El código ya está preparado: `FINANBOLSA_HTTPS=true` marca la cookie
-como `Secure`, y está en `.env.example`.
+Había que montar Caddy delante del contenedor con certificado automático, y
+quedaba una trampa por verificar. **El Caddyfile y el perfil de compose están
+escritos; falta probarlos en la Pi.**
 
-Lo que falta es el TLS. Lo natural es **Caddy como reverse proxy** delante del
-contenedor, con certificado automático. Implica:
+- `docker compose --profile https up -d` levanta Caddy delante de `web`
+- El `Caddyfile` emite el certificado solo a partir de `DOMAIN` en `.env`
+- `FINANBOLSA_HTTPS=true` va en el mismo `.env`; sin eso el navegador descarta la
+  cookie `Secure` y el login es imposible, sin ningún error visible
 
-- `web` deja de publicar el puerto hacia la LAN (o queda en `127.0.0.1`)
-- Caddy enruta 443 → 3000 y resuelve el certificado de un dominio propio
-- `FINANBOLSA_HTTPS=true`
-- **A verificar:** el proxy (`src/proxy.ts`) construye sus redirects con
-  `request.url`. Si Caddy no reenvía el `Host` original, los redirects a
-  `/login` apunten a `localhost:3000` en vez de al dominio propio. Comprobarlo
-  con el proxy montado, no antes.
+> **El perfil no usa `${DOMAIN:?}` a propósito.** Compose interpola las variables
+> de **todos** los servicios antes de aplicar el filtro de perfiles, así que una
+> variable obligatoria ahí hace fallar hasta el despliegue normal — rompe el
+> camino por defecto para validar un camino opcional. Con valor por defecto vacío,
+> activar el perfil sin `DOMAIN` lo reporta el propio Caddy al arrancar, que es
+> donde el mensaje puede servir de algo.
 
-Sin esto, la app funciona pero la sesión es interceptable en cualquier red
-intermedia. Es el punto de seguridad que más importa ahora que el objetivo es
-acceder desde fuera de casa.
+**Lo único que no se puede comprobar sin desplegar:** que `src/proxy.ts` construya
+sus redirects a partir de `request.url` y que Caddy reenvíe el `Host` original. Si
+no, entrar sin sesión te lleva a `http://localhost:3000/login`. El `Caddyfile`
+incluye `header_up Host {host}` como red de seguridad, pero la verificación es
+manual: una vez en la Pi, entrar sin sesión y confirmar que el navegador va a
+`https://tu-dominio/login`.
 
-### 3.2 Pendiente: secretos en la Pi
+Mientras el perfil esté activo, el puerto 3000 sigue publicado y quien esté en la
+LAN puede saltarse el certificado. Cerrarlo es quitar el bloque `ports` de `web`.
 
-`AUTH_PASSWORD` y `AUTH_SECRET` salen de un `.env` en el host. Cosas a
-resolver: permisos del archivo (`chmod 600`, no versionado), que el `.env` no
-termine en un backup de Git, y qué rotar si la Pi se compromete (cambiar
-`AUTH_SECRET` invalida todas las sesiones — es el mecanismo de revocación).
+### 3.2 Secretos en la Pi — HECHO
+
+`AUTH_PASSWORD` y `AUTH_SECRET` salían de un `.env` escrito a mano, con el secreto
+inventado a mano, que es el paso que más se falla y del que más depende que nadie lo escriba bien.
+
+- `npm run env:init` genera un `.env` con `AUTH_SECRET` de 32 bytes aleatorios en
+  hex — el formato que espera el HMAC-SHA256 de `auth.ts` — y lo deja en `600`
+- No sobreescribe un `.env` existente sin `--force`, porque **rotar el secreto
+  cierra las sesiones de quien esté usando la app**, y eso debe ser una decisión
+  consciente
+- `docker compose config --quiet` valida las variables obligatorias **sin
+  arrancar nada**, y `deploy.sh` lo usa como preflight
+
+**Un bloqueante de primer despliegue que salió de aquí:** `.env.example` decía
+"copia a `.env.local`", que es el nombre que lee Next.js pero **no** el que lee
+docker compose. Seguir la instrucción al pie de la letra hacía fallar el
+despliegue con `AUTH_PASSWORD no definido` y nada más, porque compose nunca abrió
+ese archivo. Corregido, y el mensaje de error del compose ahora sugiere el
+comando que lo arregla.
+
+Qué rotar si la Pi se compromete: `AUTH_SECRET` **invalida todas las sesiones** —
+ese es el mecanismo de revocación — y después `AUTH_PASSWORD`.
 
 ### 3.3 Riesgo conocido: el backup está en la misma tarjeta
 
@@ -200,22 +223,61 @@ recomienda como primera medida.
 SQLite en modo WAL hace escrituras pequeñas frecuentes (checkpoints) más un
 backup diario. Para una app con unos pocos movimientos al día el volumen es bajo y la tarjeta dura años. Anotado para que no sorprenda, no para actuar.
 
-### 3.5 Pendiente: procedimiento de actualización
+### 3.5 Procedimiento de actualización — HECHO
 
-`deploy.sh` hace `git pull` + `docker compose up -d --build` sobre `master`. Le
-falta: qué hacer si el build falla a mitad (el contenedor viejo sigue vivo, pero
-conviene saberlo), y cómo volver atrás si una migración nueva rompe la app. Con
-`drizzle-kit migrate` las migraciones no tienen down, así que el rollback real
-es restaurar un backup — que es exactamente por qué §2.1 va primero.
+`deploy.sh` hacía `git pull` + `docker compose up -d --build` sobre `master` y ya
+estaba. Le faltaba lo que importa: decir la verdad sobre si funcionó.
 
----
+**`docker compose up -d` devuelve en cuanto el contenedor se _crea_**, no cuando la
+app escucha. El script anterior terminaba con `echo "Deployed $(git rev-parse)"`:
+un contenedor en bucle de reinicio se reportaba como despliegue exitoso, y desde
+la Pi eso se descubre al abrir el navegador. Ahora hay **healthcheck** en el compose
+(`/login` con `fetch`, que además prueba proxy + Next + SQLite, no solo que un
+puerto esté abierto) y `deploy.sh` **espera a `healthy`, sale con código ≠ 0 si no
+llega, e imprime los logs y el rollback**.
+
+Tres cosas más que se añadieron por el mismo motivo:
+
+- **Preflight.** Falta `.env`, `.env` incompleto, o el árbol con cambios sin
+  commitear: se detiene **antes** de tocar el contenedor que funciona. Fallar
+  aquí es barato; fallar después deja la app caída.
+- **Rollback.** La imagen anterior se etiqueta como `finanbolsa-web:prev` antes de
+  reconstruir. Sin eso, `docker compose up --build` reutiliza la caché de capas y
+  el nombre de la imagen es siempre el mismo: no habría a qué volver. El rollback
+  de código es `git checkout -` + `./deploy.sh`, y está documentado en el README.
+- **Las migraciones corren solas.** El `CMD` es `npm run db:migrate && npm start`,
+  así que desplegar una versión con migraciones nuevas es el mismo comando de
+  siempre. La migración `0010` (fila de `settings`) es la primera que se aplicó
+  por esta vía y sirve de prueba del mecanismo.
+
+Con `drizzle-kit migrate` las migraciones no tienen `down`, así que **volver atrás
+en el código no deshace la base**: si una migración nueva rompió algo, el rollback
+real es restaurar un backup — que es por qué §2.1 va primero. El procedimiento
+completo está en el README.
+
+### 3.6 Lo único que falta: probarlo en la Pi
+
+Todo lo de arriba está verificado salvo el **build de la imagen y el arranque en
+ARM**, que no se pueden ejecutar desde aquí:
+
+| Verificado | Cómo |
+|---|---|
+| Las 9 migraciones sobre base vacía | `drizzle-kit migrate` sobre un archivo nuevo |
+| Las 11 páginas responden 200 sin datos | build de producción + servidor contra una base recién creada |
+| El contrato del contenedor | simulación de la etapa `runner`: `db:migrate`, `npm start`, el healthcheck exacto, `db:backup`, `db:verify-backup` — los cinco funcionan **sin `tsconfig.json`**, que la imagen no copia |
+| Compose válido en ambos caminos | `docker compose config --quiet`, con y sin el perfil https |
+| Que la imagen construye y arranca en ARM64 | **no verificado** |
+
+El punto abierto es el `FROM node:22-bookworm-slim` y el `apt-get install
+python3 make g++` del `npm ci`, más lanative de `better-sqlite3` en ARM. En una Pi
+4/5 debería ir directo; en una Zero/1 (armv6/armv7) esa imagen base no arranca y
+haría falta otra.
 
 ## 4. Producto
 
-- **README real** — el actual es el de `create-next-app`. Esquema, decisiones de
-  diseño, cómo respaldar y restaurar, cómo desplegar. *Parcial: se reescribió
-  junto al lote de agregación en SQL; falta la parte de despliegue, que es justo
-  lo que sigue pendiente.*
+- **README real** — *Hecho.* Esquema, decisiones, respaldo, restauración,
+  despliegue paso a paso, HTTPS y una tabla de los tres fallos que se ven bien y
+  no dicen nada útil.
 - ~~**Conversión de moneda**~~ — **Hecho**, opt-in y con TRM automática
   (`ROADMAP.md` §3.2).
 - ~~**Recurrentes proyectados**~~ — **Hecho**: avisa de subidas (§1.4), proyecta

@@ -25,7 +25,8 @@ import { and, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import { accounts, transactionSplits, transactions } from "@/db/schema";
-import { transactionMonth } from "@/lib/month-sql";
+import { monthInRange, monthsInRange, transactionMonth } from "@/lib/month-sql";
+import { monthRange } from "@/lib/month";
 import { categoryAllocations, groupSplitsByTransaction } from "@/lib/splits";
 import type { RecurringCandidate } from "@/lib/recurring";
 
@@ -43,7 +44,6 @@ export const totalKey = (month: string, type: string, currency: string) =>
  */
 export async function totalsByMonth(months: string[]): Promise<TotalsByMonth> {
   if (months.length === 0) return new Map();
-  const list = sql.join(months.map((month) => sql`${month}`), sql`, `);
   const rows = await db.all<{ month: string; type: string; currency: string; total: number }>(sql`
     select ${transactionMonth} as month,
            ${transactions.type} as type,
@@ -51,7 +51,7 @@ export async function totalsByMonth(months: string[]): Promise<TotalsByMonth> {
            sum(${transactions.amountMinor}) as total
     from ${transactions}
     where ${transactions.deletedAt} is null
-      and ${transactionMonth} in (${list})
+      and ${monthsInRange(months)}
     group by month, type, currency
   `);
   const out: TotalsByMonth = new Map();
@@ -157,6 +157,21 @@ export async function movementByAccountAndMonth(
   fromMonth: string,
   toMonth: string
 ): Promise<AccountMonthMovement[]> {
+  // The date range goes INSIDE both branches of the union, not only on the outer
+  // `where month between`. On the outside it filters a column the subqueries
+  // computed, so no index can ever act on it and the whole table is read: 201 ms
+  // at 50k rows. Inside, each branch becomes `date >= ? and date < ?` against
+  // `transactions_date_idx` and only the last twelve months are touched.
+  //
+  // Bounded to [fromMonth, toMonth] inclusive, which is exactly what the outer
+  // `month between` was asking for — `monthRange` ends on the first instant of the
+  // month after `toMonth`, so a charge on the last day still counts and a charge
+  // in the next month does not.
+  const { start } = monthRange(fromMonth);
+  const { end } = monthRange(toMonth);
+  const from = Math.floor(start.getTime() / 1000);
+  const to = Math.floor(end.getTime() / 1000);
+
   const rows = await db.all<{ account_id: string; month: string; movement: number }>(sql`
     select account_id, month, sum(movement) as movement
     from (
@@ -169,7 +184,9 @@ export async function movementByAccountAndMonth(
              case when t.type = 'income' then t.amount_minor else -t.amount_minor end as movement
       from transactions t
       join accounts a on a.id = t.account_id
-      where t.deleted_at is null and t.date > a.reference_date
+      where t.deleted_at is null
+        and t.date > a.reference_date
+        and t.date >= ${from} and t.date < ${to}
       union all
       select t.destination_account_id as account_id,
              strftime('%Y-%m', t.date, 'unixepoch', 'localtime') as month,
@@ -181,8 +198,8 @@ export async function movementByAccountAndMonth(
         and t.destination_account_id is not null
         and t.destination_account_id <> t.account_id
         and t.date > a.reference_date
+        and t.date >= ${from} and t.date < ${to}
     )
-    where month between ${fromMonth} and ${toMonth}
     group by account_id, month
   `);
   return rows.map((row) => ({
@@ -237,7 +254,6 @@ export async function spendByCategoryByMonth(
           sql`, `
         )})`
       : sql``;
-  const monthList = sql.join(months.map((month) => sql`${month}`), sql`, `);
   const rows = await db.all<{
     category_id: string;
     currency: string;
@@ -252,7 +268,7 @@ export async function spendByCategoryByMonth(
     where ${transactions.deletedAt} is null
       and ${transactions.type} = 'expense'
       and ${transactions.categoryId} is not null
-      and ${transactionMonth} in (${monthList})${exclusion}
+      and ${monthsInRange(months)}${exclusion}
     group by category_id, currency, month
   `);
   for (const row of rows) add(row.category_id, row.currency, row.month, Number(row.total));
@@ -275,7 +291,7 @@ export async function spendByCategoryByMonth(
       from ${transactions}
       where ${transactions.deletedAt} is null
         and ${transactions.type} = 'expense'
-        and ${transactionMonth} in (${monthList})
+        and ${monthsInRange(months)}
         and id in (${list})
     `);
     if (splitTx.length > 0) {
@@ -326,7 +342,7 @@ export async function spendByPayeeInMonth(month: string): Promise<PayeeMonthTota
     where ${transactions.deletedAt} is null
       and ${transactions.type} = 'expense'
       and ${transactions.payeeId} is not null
-      and ${transactionMonth} = ${month}
+      and ${monthInRange(month)}
     group by payee_id, currency
     order by total desc
   `);
@@ -368,56 +384,104 @@ export async function recurringCandidates(): Promise<RecurringCandidate[]> {
     );
 }
 
-export type IntegrityInput = {
-  accounts: { id: string; name: string; referenceDate: Date }[];
-  /** Non-deleted movements, with only the columns the check reads. */
-  movements: {
+/**
+ * Movements dated on or before their own account's reference point.
+ *
+ * Written as a query that returns **only the offenders**, not as a scan handed to
+ * JavaScript. The first version of this check loaded every non-deleted movement
+ * and compared dates in JS, which put a 50,000-row table back on the dashboard's
+ * hot path: 118 ms → 760 ms, undoing the whole of `aggregates.ts` for a check that
+ * on a healthy ledger finds nothing. The comparison is the same either way, but
+ * transferring the answer instead of the question is the difference between a
+ * scan and a query.
+ *
+ * Still one pass, and still index-friendly: `transactions_date_idx` bounds the
+ * date, and the join to `accounts` is by primary key.
+ */
+export async function movementsBeforeReference() {
+  const rows = await db.all<{
     id: number;
-    accountId: string;
-    date: Date;
-    amountMinor: number;
+    account_id: string;
+    account_name: string;
+    account_reference_date: string;
+    date: string;
+    amount_minor: number;
     currency: string;
     description: string | null;
-  }[];
-  /** Every split, joined back to its parent by the caller. */
-  splits: { transactionId: number; amountMinor: number }[];
+  }>(sql`
+    select t.id as id,
+           a.id as account_id,
+           a.name as account_name,
+           a.reference_date as account_reference_date,
+           t.date as date,
+           t.amount_minor as amount_minor,
+           t.currency as currency,
+           t.description as description
+    from transactions t
+    join accounts a on a.id = t.account_id
+    where t.deleted_at is null
+      and t.date <= a.reference_date
+  `);
+  return rows.map((row) => ({
+    id: row.id,
+    accountId: row.account_id,
+    accountName: row.account_name,
+    referenceDate: new Date(row.account_reference_date),
+    date: new Date(row.date),
+    amountMinor: Number(row.amount_minor),
+    currency: row.currency,
+    description: row.description,
+  }));
+}
+
+export type OversplitRow = {
+  transactionId: number;
+  currency: string;
+  date: Date;
+  description: string | null;
+  parentAmount: number;
+  splitTotal: number;
 };
 
 /**
- * The two ways this app's own arithmetic can end up lying, gathered for the
- * dashboard. See `ledger-integrity.ts` for why each one produces a wrong number
- * with no error.
+ * Breakdowns that attribute more than their transaction holds.
  *
- * Both queries are the same scan the balance does, reusing the joins it already
- * needs, so this costs one extra pass over a range the dashboard is touching
- * anyway. It only runs on the dashboard, not on every page: it is a check, not a
- * thing to recompute while someone is typing.
+ * A `HAVING` on the same GROUP BY that totals the splits, for the same reason as
+ * above: on a healthy ledger the result is empty, and the point of the check is
+ * that emptiness. Every t.* column is in the GROUP BY rather than relied on as
+ * bare, because that is only guaranteed by SQLite and not by the SQL standard —
+ * and this app runs on exactly one database, so there is no reason to depend on
+ * the guarantee instead of asking for it.
  */
-export async function loadIntegrityInput(): Promise<IntegrityInput> {
-  const [accountRows, movementRows, splitRows] = await Promise.all([
-    db
-      .select({ id: accounts.id, name: accounts.name, referenceDate: accounts.referenceDate })
-      .from(accounts),
-    db
-      .select({
-        id: transactions.id,
-        accountId: transactions.accountId,
-        date: transactions.date,
-        amountMinor: transactions.amountMinor,
-        currency: transactions.currency,
-        description: transactions.description,
-      })
-      .from(transactions)
-      .where(isNull(transactions.deletedAt)),
-    db
-      .select({
-        transactionId: transactionSplits.transactionId,
-        amountMinor: transactionSplits.amountMinor,
-      })
-      .from(transactionSplits),
-  ]);
-
-  return { accounts: accountRows, movements: movementRows, splits: splitRows };
+export async function oversplitTransactions(): Promise<OversplitRow[]> {
+  const rows = await db.all<{
+    transaction_id: number;
+    currency: string;
+    date: string;
+    description: string | null;
+    parent_amount: number;
+    split_total: number;
+  }>(sql`
+    select s.transaction_id as transaction_id,
+           t.currency as currency,
+           t.date as date,
+           t.description as description,
+           t.amount_minor as parent_amount,
+           sum(s.amount_minor) as split_total
+    from transaction_splits s
+    join transactions t on t.id = s.transaction_id
+    where t.deleted_at is null
+    group by s.transaction_id, t.currency, t.date, t.description, t.amount_minor
+    having sum(s.amount_minor) > abs(t.amount_minor)
+  `);
+  return rows.map((row) => ({
+    transactionId: row.transaction_id,
+    currency: row.currency,
+    date: new Date(row.date),
+    description: row.description,
+    parentAmount: Number(row.parent_amount),
+    splitTotal: Number(row.split_total),
+  }));
 }
 
 export type RecentSplit = {
@@ -425,8 +489,6 @@ export type RecentSplit = {
   payeeId: string | null;
   /** veces usada, para ordenar por hábito y no por alfabetía */
   uses: number;
-  /** 'YYYY-MM-DD' del uso más reciente. */
-  lastUsed: string;
 };
 
 /**
@@ -438,7 +500,7 @@ export type RecentSplit = {
  * un desglose de un retiro de mercado y uno de una cena usan categorías
  * distintas aunque alguna coincida.
  *
- * Se ordenan por **uso reciente y frecuencia**, no por fecha del último uso: una
+ * Se ordenan por **uso frecuente y reciente**, no por la fecha del último uso: una
  * combinación usada 20 veces hace un año es más probable que sea la correcta que
  * una usada dos veces esta semana, y el usuario casi siempre desglosa lo mismo.
  *
@@ -450,23 +512,20 @@ export async function recentSplits(limit: number): Promise<RecentSplit[]> {
     category_id: string | null;
     payee_id: string | null;
     uses: number;
-    last_used: string;
   }>(sql`
     select s.category_id as category_id,
            s.payee_id as payee_id,
-           count(*) as uses,
-           max(t.date) as last_used
+           count(*) as uses
     from transaction_splits s
     join transactions t on t.id = s.transaction_id
     where t.deleted_at is null
     group by s.category_id, s.payee_id
-    order by uses desc, last_used desc
+    order by uses desc
     limit ${limit}
   `);
   return rows.map((row) => ({
     categoryId: row.category_id,
     payeeId: row.payee_id,
     uses: Number(row.uses),
-    lastUsed: row.last_used,
   }));
 }

@@ -1,0 +1,67 @@
+# HTTPS con Caddy, certificado automático.
+#
+# Se activa con:  docker compose --profile https up -d
+# y necesita DOMAIN en el .env apuntando a la Pi.
+#
+# ## Lo que este archivo resuelve
+#
+# La app se sirve por http plano en el puerto 3000. Eso está bien en una red de
+# confianza, pero desde fuera de casa la cookie de sesión viaja en claro: cualquiera
+# en el camino puede leerla y usarla. Caddy termina TLS y deja la app por dentro.
+#
+# Se accede a la app por 443 y **nunca directamente por 3000**: ese puerto sigue
+# publicado en el host, así que quien esté en la LAN puede saltarse el
+# certificado. Si prefieres cerrarlo del todo, quita el bloque `ports` del
+# servicio `web` en docker-compose.yml y deja Caddy como única entrada.
+#
+# ## La trampa que hay que comprobar con esto montado
+#
+# `src/proxy.ts` construye sus redirecciones a partir de `request.url`. Caddy
+# reenvía la petición con el Host original, pero sólo si `reverse_proxy` no lo
+# reescribe — que es lo que hace por defecto — así que el flujo normal es correcto.
+#
+# Aun así, **verifícalo una vez montado**: entra sin sesión y comprueba que el
+# navegador te lleva a
+#
+#     https://TU-DOMINIO/login
+#
+# y no a
+#
+#     http://localhost:3000/login
+#
+# Si te lleva a `localhost:3000`, el Host no está llegando y hay que añadir
+# `header_up Host {host}` en el `reverse_proxy` de abajo. No se puede comprobar
+# sin desplegar: es el único punto de este despliegue que depende de cómo estén
+# las dos piezas hablando entre sí.
+
+{
+	# Sin correo no hay aviso de caducidad ni de fallo de emisión. Caddy acepta
+	// una cadena vacía y lo trata como "no avisar", que es el comportamiento
+	// por defecto de Let's Encrypt y no rompe nada.
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# Sin esto Caddy redirige / a /, y un usuario que teclea la IP sin esquema
+	# acaba en un error de certificado en lugar de en la app.
+	redir https://www.{$DOMAIN} 301
+
+	# Las cabeceras de Next (RSC, Server Actions, el payload de los formularios)
+	# no sobreviven a la compresión con brotli de forma fiable, y zstd es
+	# suficiente para una app de LAN.
+	reverse_proxy web:3000 {
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+
+	# SQLite: un archivo en un bind mount, leído y escrito por un solo contenedor.
+	# Nunca lo sirvas por HTTP — descarga el volcado desde Configuración y
+	# bórralo del disco.
+	file_server {
+		@denied path /data*
+		respond @denied 404
+	}
+}

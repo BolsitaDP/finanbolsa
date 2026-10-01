@@ -71,6 +71,13 @@
       "when": 1790819580294,
       "tag": "0009_yellow_dark_beast",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1790822178661,
+      "tag": "0010_seed_settings_row",
+      "breakpoints": true
     }
   ]
 }

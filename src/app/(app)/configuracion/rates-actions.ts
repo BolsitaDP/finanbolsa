@@ -4,6 +4,7 @@ import { and, asc, eq, lte } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
 import { db } from "@/db";
+import { saveSettings } from "@/lib/settings-store";
 import { exchangeRates } from "@/db/schema";
 import { buildRateIndex, type RateIndex, type RateRow } from "@/lib/currency";
 import { fetchMonthlyAverageTrm, TRM_CURRENCIES } from "@/lib/trm";
@@ -206,7 +207,7 @@ export async function refreshRatesFromTrm(
 
 /** Turns the conversion of multi-currency amounts on or off. */
 export async function setConvertCurrency(enabled: boolean) {
-  await db.update(settings).set({ convertCurrency: enabled }).where(eq(settings.id, "default"));
+  await saveSettings({ convertCurrency: enabled });
   revalidatePath("/configuracion");
   revalidatePath("/presupuesto");
   revalidatePath("/");
