@@ -52,4 +52,6 @@ chmodSync(TARGET, 0o600);
 console.log(`${TARGET} creado.`);
 console.log(`  AUTH_SECRET generado (${secret.length} caracteres hex).`);
 console.log(`  AUTH_PASSWORD: ${password}${passwordArg ? "" : "  (generada; cámbiala si quieres)"}`);
-console.log("\nSiguiente paso:  docker compose up -d --build");
+const port = filled.match(/^PUERTO=(\d+)$/m)?.[1] ?? "4000";
+console.log("\nSiguiente paso:  ./deploy.sh");
+console.log(`  y luego abre    http://<ip-de-la-pi>:${port}`);

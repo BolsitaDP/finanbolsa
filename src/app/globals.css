@@ -165,3 +165,228 @@
     block-size: 1.125rem;
   }
 }
+
+/* --- Botones: la misma definición, pero fuera del markup --------------------
+ *
+ * `buttonVariants()` serializaba su cadena de clases dentro de cada `<button>`.
+ * Medido en `/transacciones` a 50 filas: **809 caracteres repetidos 151 veces**,
+ * unos 122 KB de los 433 KB de la página — el 28% del peso era la misma lista de
+ * utilidades, copiada.
+ *
+ * La definición no cambia: sigue siendo Tailwind, solo que las utilidades viven
+ * en la hoja de estilos y cada botón lleva `btn btn-ghost btn-icon-sm`. El HTML se
+ * encoge y el CSS, que el navegador descarga una vez, crece lo mismo.
+ *
+ * El API de `cva` no cambia, así que los ~100 sitios que llaman a `<Button>` no se
+ * tocan: es un cambio de dónde vive la lista, no de qué hay en ella.
+ */
+@layer components {
+  .btn {
+    /* `group/button` is a marker, not a utility: it names a group so that
+       `group-hover:` can target it, and produces no rule of its own, so
+       `@apply` rejects it. It goes in as a literal declaration. */
+    group: button;
+    @apply inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40;
+  }
+  /* Solo los hijos SVG, como el `[&_svg]:…` original. Ponerlo sobre `> *`
+     alcanzaría también a los `<span>` de un botón con etiqueta, que es un
+     cambio de comportamiento, no una forma más corta de escribir lo mismo. */
+  .btn > svg {
+    @apply pointer-events-none shrink-0;
+  }
+  .btn > svg:not([class*="size-"]) {
+    @apply size-4;
+  }
+
+  .btn-default {
+    @apply bg-primary text-primary-foreground;
+  }
+  .btn-default:hover {
+    @apply bg-primary/80;
+  }
+
+  .btn-outline {
+    @apply border-border bg-background;
+  }
+  .btn-outline:hover {
+    @apply bg-muted text-foreground;
+  }
+  .btn-outline[aria-expanded] {
+    @apply bg-muted text-foreground;
+  }
+  .btn-outline:focus-visible {
+    @apply ring-0;
+  }
+  @media (prefers-color-scheme: dark) {
+    .btn-outline {
+      @apply border-input bg-input/30;
+    }
+    .btn-outline:hover {
+      @apply bg-input/50;
+    }
+  }
+
+  .btn-secondary {
+    @apply bg-secondary text-secondary-foreground;
+  }
+  .btn-secondary:hover {
+    @apply bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)];
+  }
+  .btn-secondary[aria-expanded] {
+    @apply bg-secondary text-secondary-foreground;
+  }
+
+  .btn-ghost {
+    @apply hover:bg-muted hover:text-foreground;
+  }
+  .btn-ghost[aria-expanded] {
+    @apply bg-muted text-foreground;
+  }
+  @media (prefers-color-scheme: dark) {
+    .btn-ghost:hover {
+      @apply bg-muted/50;
+    }
+  }
+
+  .btn-destructive {
+    @apply bg-destructive/10 text-destructive;
+  }
+  .btn-destructive:hover {
+    @apply bg-destructive/20;
+  }
+  .btn-destructive:focus-visible {
+    @apply border-destructive/40 ring-destructive/20;
+  }
+  @media (prefers-color-scheme: dark) {
+    .btn-destructive {
+      @apply bg-destructive/20 text-destructive;
+    }
+    .btn-destructive:hover {
+      @apply bg-destructive/30;
+    }
+    .btn-destructive:focus-visible {
+      @apply ring-destructive/40;
+    }
+  }
+
+  .btn-link {
+    @apply text-primary underline-offset-4;
+  }
+  .btn-link:hover {
+    @apply underline;
+  }
+
+  .btn-default-size,
+  .btn-lg {
+    @apply h-8 gap-1.5 px-2.5;
+  }
+  .btn-lg {
+    @apply h-9;
+  }
+  .btn-default-size:has([data-icon="inline-end"]),
+  .btn-lg:has([data-icon="inline-end"]) {
+    @apply pr-2;
+  }
+  .btn-default-size:has([data-icon="inline-start"]),
+  .btn-lg:has([data-icon="inline-start"]) {
+    @apply pl-2;
+  }
+
+  .btn-xs {
+    @apply h-6 gap-1 rounded-[min(var(--radius-md),10px)] px-2 text-xs;
+  }
+  .btn-xs > svg:not([class*="size-"]) {
+    @apply size-3;
+  }
+
+  .btn-sm {
+    @apply h-7 gap-1 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem];
+  }
+  .btn-sm > svg:not([class*="size-"]) {
+    @apply size-3.5;
+  }
+
+  .btn-icon {
+    @apply size-8;
+  }
+  .btn-icon-xs {
+    @apply size-6 rounded-[min(var(--radius-md),10px)];
+  }
+  .btn-icon-xs > svg:not([class*="size-"]) {
+    @apply size-3;
+  }
+  .btn-icon-sm {
+    @apply size-7 rounded-[min(var(--radius-md),12px)];
+  }
+  .btn-icon-lg {
+    @apply size-9;
+  }
+}
+
+/* --- Badge y celdas de tabla: mismo motivo que los botones -----------------
+ *
+ * El badge eran 584 caracteres por aparición y las celdas 76, repetidas cientos
+ * de veces en `/transacciones`. Los badges además salen en el dashboard,
+ * recurrentes, categorías y cuentas, así que el ahorro se repite en cada página.
+ *
+ * Igual que en los botones: la definición no cambia, solo deja de viajar en cada
+ * elemento. Las utilidades exóticas (`last:border-0`,
+ * `[&:has([role=checkbox])]:pr-0`, `has-aria-expanded:…`) son válidas en `@apply`
+ * porqueselectores, no marcadores de grupo.
+ */
+@layer components {
+  .badge {
+    /* Marcador de grupo, no utilidad: va literal. */
+    group: badge;
+    @apply inline-flex h-5 w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-4xl border border-transparent px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-all focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40;
+  }
+  .badge:has([data-icon="inline-end"]) {
+    @apply pr-1.5;
+  }
+  .badge:has([data-icon="inline-start"]) {
+    @apply pl-1.5;
+  }
+  .badge > svg {
+    @apply pointer-events-none;
+  }
+  .badge > svg:not([class*="size-"]) {
+    @apply size-3;
+  }
+
+  .badge-default {
+    @apply bg-primary text-primary-foreground;
+  }
+  .badge-secondary {
+    @apply bg-secondary text-secondary-foreground;
+  }
+  .badge-destructive {
+    @apply bg-destructive/10 text-destructive;
+  }
+  .badge-outline {
+    @apply border-border text-foreground;
+  }
+  .badge-ghost {
+    @apply hover:bg-muted;
+  }
+  .badge-link {
+    @apply text-primary underline-offset-4;
+  }
+
+  .trow {
+    @apply border-b border-border/60 transition-colors last:border-0 hover:bg-accent/40 has-aria-expanded:bg-accent/40 data-[state=selected]:bg-accent/60;
+  }
+
+  .tcell {
+    @apply px-3 py-2.5 align-middle whitespace-nowrap;
+  }
+  .tcell:has([role="checkbox"]) {
+    @apply pr-0;
+  }
+
+  .thead {
+    @apply h-10 px-3 text-left align-middle text-xs font-medium tracking-wide text-muted-foreground uppercase whitespace-nowrap;
+  }
+  .thead:has([role="checkbox"]) {
+    @apply pr-0;
+  }
+}

@@ -3,7 +3,12 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - "${PUERTO:-3000}:3000"
+      # El puerto interno del contenedor es SIEMPRE 3000 — lo fija el
+      # Dockerfile (ENV PORT=3000) y es el que consulta el healthcheck. Aquí solo
+      # se cambia el puerto que se publica en el host, que es el que puede estar
+      # ocupado. El 3000 es el que Next usa en desarrollo, así que es el primero
+      # que se choca; 4000 no lo usa ningún framework de los habituales.
+      - "${PUERTO:-4000}:3000"
     volumes:
       # SQLite file persists on the host across container rebuilds/updates.
       - ./data:/app/data

@@ -119,16 +119,25 @@ en UTC en `detectRecurring`).
 Los índices de `category_id` y `currency` **no** se agregaron: la agregación es
 por mes y los tres índices existentes ya cubren ese rango. Ver `ROADMAP.md` §4.1.
 
-### 2.4 El markup de Tailwind es el nuevo piso — ~2 h · PENDIENTE
+### 2.4 El markup de Tailwind era el piso — HECHO
 
-Con la paginación resuelta, `/transacciones` bajó de 26,4 MB a 310 KB a 50k
-filas — pero 310 KB para **50 filas** es 4,7 KB por fila, casi todo clases de
-Tailwind repetidas (`<td>` ~85 chars × 7 celdas; un `<span>` de badge, ~640).
-El shell de la app son ~77 KB en **cada** página, constante.
+`/transacciones` pesaba 433 KB a 50k filas, casi todo **la misma lista de clases
+de Tailwind repetida**: la definición de un botón, 809 caracteres, copiada 151
+veces. 122 KB de los 433. El detalle y las dos trampas del arreglo están en
+`ROADMAP.md` §5.1; la versión corta es que las utilidades se movieron a
+`@layer components` con `@apply` y cada botón emite `btn btn-ghost btn-icon-sm`.
 
-Es independiente del tamaño de la base: es lo que queda cuando el dato ya no
-es el problema. Opciones: reducir `PAGE_SIZE`, o extraer las clases repetidas a
-un `@apply` / componente. Ver `ROADMAP.md` §5.
+| Página | Antes | Ahora |
+|---|---|---|
+| `/transacciones` | 433 KB | **154 KB** |
+| `/` | 283 KB | **220 KB** |
+| `/categorias` | 89 KB | **72 KB** |
+
+Y `PAGE_SIZE` de 50 a 25, que era la otra mitad del ítem y dependía de una pregunta
+que el propio ROADMAP tenía abierta sin responder: **¿cuánto móvil vs escritorio?**
+La respuesta es móvil —la app vive en una Pi y se abre desde el celular—, y a 3 KB
+por fila 50 filas son 150 KB que el celular baja para una lista con paginación
+debajo.
 
 ### 2.5 Bug de zona horaria — HECHO
 

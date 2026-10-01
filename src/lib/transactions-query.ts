@@ -17,7 +17,20 @@ import { TRANSACTION_TYPES, type TransactionType } from "@/lib/enums";
  * reload lands on the same page.
  */
 
-export const PAGE_SIZE = 50;
+/**
+ * Filas por página, por defecto.
+ *
+ * 25, no 50. La decisión se tomó con el dato de dónde se usa: la app vive en una
+ * Raspberry Pi y se abre **desde el celular**, por wifi. Con el markup por fila ya
+ * reducido (§5.1) cada fila sigue pesando ~5 KB, así que 50 filas son ~250 KB de
+ * tabla que el celular tiene que bajar y parsear para mostrar una lista que nadie
+ * va a recorrer entera — la paginación está debajo.
+ *
+ * El selector sigue ofreciendo 50 y 100, así que en un escritorio grande se
+ * cambia en un clic. Y como el valor vive en la URL, un enlace a
+ * `/transacciones?pageSize=100` lo abre a 100 sin importar el defecto.
+ */
+export const PAGE_SIZE = 25;
 
 /**
  * Page sizes offered for the server-driven table.

@@ -118,18 +118,25 @@ git checkout -            # deshace el pull
 
 ### Acceder desde otro dispositivo
 
-El compose publica el puerto 3000 en la LAN (configurable con `PUERTO` en `.env`).
-Entra por la IP del Pi.
+El compose publica el **4000** en el LAN — no el 3000, que es el puerto de Next en
+desarrollo y suele estar ocupado justo cuando quieres levantar la producción en la
+misma máquina. Se cambia con `PUERTO` en `.env`; el puerto interno del contenedor
+siempre es 3000.
 
-Sin HTTPS a propósito: en una red de casa un certificado autofirmado solo produce
-advertencias y no protege nada del tráfico que no sale del tu router. **Desde
-fuera de casa sí hace falta** — ahí la cookie de sesión viaja en claro y cualquiera
-en el camino puede leerla.
+Entra por la IP de la Pi: `http://192.168.x.x:4000`.
 
-### HTTPS
+> Sin HTTPS, a propósito y sin prisa. En una red de casa un certificado
+> autofirmado solo produce advertencias y no protege nada del tráfico que no sale
+> de tu router. **Hace falta cuando la accesses desde fuera** —ahí la cookie de
+> sesión viaja en claro— y para eso hace falta un dominio. Está todo listo abajo,
+> pero no hay nada que hacer hoy: `docker compose up -d` funciona sin HTTPS y
+> `FINANBOLSA_HTTPS` se queda en `false`.
 
-Opt-in, con Caddy y certificado automático. Necesitas un dominio propio apuntando
-a la Pi y los puertos 80/443 libres.
+### HTTPS — cuando tengas dominio
+
+Nada de esto hace falta para usar la app; es para el día que quieras abrirla fuera
+de casa. Caddy con certificado automático, opt-in por perfil de compose. Necesitas
+un dominio propio apuntando a la Pi y los puertos 80/443 libres.
 
 ```bash
 # en .env
@@ -150,7 +157,7 @@ desde fuera. El `Caddyfile` ya incluye `header_up Host {host}` como red de
 seguridad, pero es el único punto del despliegue que no se puede comprobar sin
 desplegarlo.
 
-> Mientras uses el perfil `https`, el puerto 3000 sigue publicado: quien esté en
+> Mientras uses el perfil `https`, el puerto 4000 sigue publicado: quien esté en
 > la LAN puede saltarse el certificado. Si prefieres cerrarlo, quita el bloque
 > `ports` del servicio `web` en `docker-compose.yml`.
 
@@ -173,6 +180,7 @@ Tres fallos que se ven bien y no dicen nada útil:
 | `/login` carga pero no acepta la contraseña | falta `AUTH_PASSWORD` en `.env` |
 | No acepta la contraseña y estás en `http://` de la LAN | `FINANBOLSA_HTTPS=true` sin HTTPS: el navegador descarta la cookie `Secure` |
 | El deploy dice que está bien y al abrir no hay nada | con el healthcheck esto ya no pasa; si ocurre, `docker compose ps` dirá `unhealthy` |
+| `port is already allocated` al arrancar | hay otro `PUERTO` en `.env`, o un proceso usando ese puerto: `docker compose ps` |
 
 ## Datos y respaldo
 

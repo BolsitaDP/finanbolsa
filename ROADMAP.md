@@ -966,24 +966,65 @@ una vez que 4.1 exista.
 
 ## Fase 5 — Rendimiento que ya está medido
 
-No es lo más visible, pero está cuantificado en `PLAN.md`.
+No es lo más visible, pero está cuantificado en `PLAN.md`. Con la Fase 4 cerrada
+las cifras se remedieron sobre 50 000 filas con el build de producción.
 
-| Qué | Ahora | Objetivo |
-|---|---|---|
-| Markup por fila | 4,7 KB | < 1 KB |
-| Shell por página | 77 KB | — |
-| `/transacciones` a 50k | 310 KB, 111 ms | constante ✓ (ya cumplido) |
-| `/recurrentes` a 50k | 621 KB, 485 ms | ver 4.1 |
+| Página | Antes de esta fase | Ahora | |
+|---|---|---|---|
+| `/transacciones` | 433 KB | **154 KB** | 2,8× |
+| `/` | 283 KB | **220 KB** | |
+| `/categorias` | 89 KB | **72 KB** | |
+| `/cuentas` | 71 KB | **63 KB** | |
 
-**5.1 Clases de Tailwind repetidas** (~2 h). Cada `<td>` repite ~85 caracteres
-de clase; un `<span>` de badge, ~640. El shell son 77 KB en cada página
-aunque no haya datos. Extraer a `@apply` / componentes. Ganancia ~S**.
+### 5.1 Clases repetidas en el markup — HECHO
 
-**5.2 `PAGE_SIZE` de 50 a 25** (1 línea, medible). Con 4,7 KB por fila, 25
-filas son 118 KB en vez de 235 KB. Probar si 25 filas se sienten suficientes
-—en celular, probablemente sí.
+El peso no estaba en los datos sino en **la misma lista de utilidades copiada**.
+Medido en `/transacciones` a 50 filas:
 
----
+| Clase | Repeticiones | Bytes | Qué era |
+|---|---|---|---|
+| Botón de acción | 151× | **809 c** | `buttonVariants()` serializado dentro de cada `<button>` |
+| Badge | 49× | **584 c** | lo mismo, en `badgeVariants()` |
+| `<td>` | 350× | 76 c | `px-3 py-2.5 …` |
+| `<tr>` | 51× | 142 c | bordes y hover |
+
+**122 KB de los 433 KB — el 28% — eran la definición de un botón repetida.** Y
+crecía con cada botón nuevo que se añadía a una fila: la feature §2.3 (desglose
+rápido) Metió un botón más por fila y sumó unos 4 KB más por fila.
+
+**El arreglo no es "escribir menos clases": es dónde viven.** Las utilidades se
+mueven a `src/app/globals.css`, en `@layer components` con `@apply`, y cada
+elemento emite un nombre corto (`btn btn-ghost btn-icon-sm`, 25 caracteres). El
+API de `cva` no cambia, así que los ~100 sitios que llaman a `<Button>` no se
+tocan: es un cambio de dónde vive la lista, no de qué hay en ella.
+
+> **La definición no se "simplificó": se copió tal cual.** Atacarlo por recorte —quitar
+> reglas que parecem muertas como los cuatro `aria-invalid:` del botón— habría
+> ahorrado más caracteres, pero cambia el design system sin forma de mirar el
+> resultado. Aquí cada utilidad se aplica una por una y se verificó en el CSS
+> compilado, regla por regla.
+
+Dos trampas que aparecieron y quedaron documentadas en el código:
+
+- **`group/button` y `group/badge` no se pueden aplicar con `@apply`.** Son
+> marcadores de grupo —nombran un grupo para que `group-hover:` lo apunte— y no
+  producen ninguna regla propia, así que el compilador los rechaza. Van como
+  declaración literal: `group: button`.
+- **`@apply` sobre `> *` cambia el comportamiento.** El original era
+  `[&_svg]:pointer-events-none`, solo SVG. Puesto sobre `> *` alcanzaría también a
+  los `<span>` de un botón con etiqueta. Se dejó en `.btn > svg`.
+
+### 5.2 `PAGE_SIZE` de 50 a 25 — HECHO
+
+Con lo de arriba, cada fila sigue pesando ~3 KB. 50 filas son ~150 KB de tabla que
+el celular tiene que bajar y parsear para mostrar una lista que nadie va a recorrer
+entera, con la paginación justo debajo.
+
+**La decisión se tomó con un dato que antes no estaba:** la app vive en una
+Raspberry Pi y se abre **desde el celular**. Eso responde la pregunta abierta #1 del
+propio ROADMAP ("¿cuánto móvil vs escritorio?") que nadie había contestado. El
+selector sigue ofreciendo 50 y 100, y como el valor vive en la URL,
+`/transacciones?pageSize=100` abre a 100 sin importar el defecto.
 
 ## Lo que NO construiría
 
@@ -1044,8 +1085,10 @@ tarea por la que realmente se abre la app y hoy no existe.
 
 Cosas donde la respuesta cambia qué se construye:
 
-1. **¿Cuánto móvil vs escritorio?** Cambia el orden de 0.1, 5.2 y si hace
-   falta 2.1. Hoy asumí "a veces desde el celular".
+1. ~~**¿Cuánto móvil vs escritorio?**~~ — **RESPONDIDA: móvil.** La app vive en
+   una Raspberry Pi y se abre desde el celular. Eso decidió §5.2 (25 filas en vez
+   de 50) y sube la prioridad del trabajo de markup, que es lo único que se paga
+   en cada carga de cada página.
 2. **¿Las suscripciones se gestionan aquí o solo se registran?** Si se gestionan,
    2.2 sube de prioridad. Si solo se registran, es un informe y 1.4 basta.
 3. **¿Se va a importar de otros bancos?** Si sí, 3.3 y el importador genérico
