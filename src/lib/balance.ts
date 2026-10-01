@@ -73,7 +73,20 @@ export function netWorthTrend(
   for (const account of accountsList) {
     let runningBalance = current.get(account.id)!;
     const relevant = allTransactions
-      .filter((tx) => tx.accountId === account.id || (tx.type === "transfer" && tx.destinationAccountId === account.id))
+      .filter(
+        (tx) =>
+          // Only movements the account's own reference point does not already
+          // account for. `currentBalances` ignores anything dated on or before
+          // referenceDate because it is baked into referenceBalanceMinor, so
+          // unwinding those here too would add back money that was never in
+          // the running balance — inventing history rather than reconstructing
+          // it. An imported account whose reference date sits at the end of the
+          // imported range has no knowable history before it, and must draw a
+          // flat line, not a fabricated one.
+          tx.date > account.referenceDate &&
+          (tx.accountId === account.id ||
+            (tx.type === "transfer" && tx.destinationAccountId === account.id))
+      )
       .sort((a, b) => b.date.getTime() - a.date.getTime());
 
     let idx = 0;
@@ -85,6 +98,67 @@ export function netWorthTrend(
       }
       points[i].totalsByCurrency[account.currency] =
         (points[i].totalsByCurrency[account.currency] ?? 0) + runningBalance;
+    }
+  }
+
+  return points.reverse();
+}
+
+/**
+ * The same series, from movements SQL has already summed by month.
+ *
+ * `netWorthTrend` above undoes one transaction at a time, but the walk is a
+ * running total: the balance at a month end only ever needs the SUM of the
+ * movements after it, never the individual rows. Feeding it per-month sums
+ * makes it O(accounts x months) instead of O(transactions), and produces an
+ * identical series — `__tests__/aggregates.test.ts` checks that against real
+ * data, so this is a performance swap rather than a second implementation.
+ *
+ * `monthly` only needs to cover the months from the oldest boundary onwards;
+ * earlier ones cannot affect the walk.
+ */
+export function netWorthTrendFromMonthly(
+  accountsList: Account[],
+  current: Map<string, number>,
+  monthly: { accountId: string; month: string; movement: number }[],
+  months: number
+): NetWorthPoint[] {
+  const now = new Date();
+  // monthEnds[0] = end of the current month ... monthEnds[months - 1] = oldest.
+  const monthEnds: Date[] = [];
+  for (let i = 0; i < months; i++) {
+    monthEnds.push(new Date(now.getFullYear(), now.getMonth() - i + 1, 0, 23, 59, 59, 999));
+  }
+  const points: NetWorthPoint[] = monthEnds.map((d) => ({
+    month: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`,
+    totalsByCurrency: {},
+  }));
+
+  // Per account, its monthly sums. A movement dated in month M is already
+  // inside the end-of-M balance, so it only gets undone for boundaries
+  // strictly older than M.
+  const byAccount = new Map<string, Map<string, number>>();
+  for (const row of monthly) {
+    const perMonth = byAccount.get(row.accountId) ?? new Map<string, number>();
+    perMonth.set(row.month, (perMonth.get(row.month) ?? 0) + row.movement);
+    byAccount.set(row.accountId, perMonth);
+  }
+
+  for (const account of accountsList) {
+    const sums = byAccount.get(account.id);
+    // monthEnds runs newest to oldest, so the set of months newer than each
+    // boundary only ever grows: one forward pointer, no per-boundary rescan.
+    let undone = 0;
+    let from = 0;
+    for (let i = 0; i < monthEnds.length; i++) {
+      while (from < monthEnds.length && points[from].month > points[i].month) {
+        undone += sums?.get(points[from].month) ?? 0;
+        from++;
+      }
+      points[i].totalsByCurrency[account.currency] =
+        (points[i].totalsByCurrency[account.currency] ?? 0) +
+        (current.get(account.id) ?? 0) -
+        undone;
     }
   }
 

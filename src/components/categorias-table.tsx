@@ -16,6 +16,10 @@ import { CategoryFormDialog } from "@/components/category-form-dialog";
 import { BulkEditCategoriesDialog } from "@/components/bulk-edit-categories-dialog";
 import { DeleteButton } from "@/components/delete-button";
 import { bulkDeleteCategories, deleteCategory } from "@/app/(app)/categorias/actions";
+import {
+  CATEGORY_KIND_LABELS,
+  type CategoryKind,
+} from "@/lib/enums";
 import type { categories } from "@/db/schema";
 
 type Category = typeof categories.$inferSelect;
@@ -149,7 +153,7 @@ export function CategoriasTable({
         header: ({ column }) => <DataTableColumnHeader column={column} title="Tipo" />,
         cell: ({ row }) => (
           <Badge variant={row.original.kind === "expense" ? "destructive" : "secondary"}>
-            {row.original.kind}
+            {CATEGORY_KIND_LABELS[row.original.kind as CategoryKind] ?? row.original.kind}
           </Badge>
         ),
         meta: { label: "Tipo" },
@@ -202,7 +206,7 @@ export function CategoriasTable({
           data={group}
           pageSize={50}
           getRowId={(row) => row.id}
-          emptyMessage={`No hay categorías de ${label.toLowerCase()} que coincidan.`}
+          emptyNoun="categorías"
           storageKey={`categorias-${kind}`}
           bulkToolbar={(selected, clear) => {
             const ids = selected.map((category) => category.id);

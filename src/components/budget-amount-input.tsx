@@ -16,6 +16,17 @@ export function BudgetAmountInput({
   initial: number;
 }) {
   const [value, setValue] = useState(initial ? String(initial) : "");
+  // MonthSwitcher changes `?month=`, the server re-renders with a new
+  // `initial`, and this component is reused rather than remounted — so without
+  // adopting the new value it kept showing the PREVIOUS month's amount, and
+  // typing into it then wrote that stale number into the new month. Adjusting
+  // during render (React's documented pattern for state tracking a prop) avoids
+  // the extra paint that doing it in an effect would cause.
+  const [lastInitial, setLastInitial] = useState(initial);
+  if (initial !== lastInitial) {
+    setLastInitial(initial);
+    setValue(initial ? String(initial) : "");
+  }
   const [isPending, startTransition] = useTransition();
 
   function commit() {
@@ -24,6 +35,9 @@ export function BudgetAmountInput({
     startTransition(async () => {
       try {
         await setBudgetAmount(categoryId, month, amount);
+        // Silence on success left the user unsure whether the edit saved, which
+        // matters here because the field is edited on blur with no other cue.
+        toast.success("Presupuesto guardado");
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "No se pudo guardar");
       }

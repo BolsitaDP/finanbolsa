@@ -25,6 +25,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { DataTablePagination } from "./pagination";
+import { EmptyState } from "@/components/empty-state";
 import { createSelectionColumn } from "./selection-column";
 import { DataTableSettings } from "./column-visibility-menu";
 
@@ -52,7 +53,10 @@ export function DataTable<TData, TValue>({
   bulkToolbar,
   getRowId,
   pageSize = 15,
-  emptyMessage = "Sin resultados.",
+  /** Plural noun used by the shared empty state, e.g. "transacciones". */
+  emptyNoun = "resultados",
+  /** True when a search or filter is active — changes which empty state reads correctly. */
+  isFiltered = false,
   initialSorting,
   storageKey,
   server,
@@ -63,7 +67,9 @@ export function DataTable<TData, TValue>({
   bulkToolbar?: (selectedRows: TData[], clearSelection: () => void) => React.ReactNode;
   getRowId?: (row: TData, index: number) => string;
   pageSize?: number;
-  emptyMessage?: string;
+  /** Plural noun used by the shared empty state, e.g. "transacciones". */
+  emptyNoun?: string;
+  isFiltered?: boolean;
   initialSorting?: SortingState;
   // Enables the column-visibility toggle and, keyed by this string, persists
   // the chosen columns to localStorage so they survive a page reload. Pass a
@@ -84,6 +90,9 @@ export function DataTable<TData, TValue>({
     onSortingChange: (sorting: SortingState) => void;
     pageIndex: number;
     onPageIndexChange: (pageIndex: number) => void;
+    /** Page size is a URL concern in server mode; TanStack's own is ignored. */
+    onPageSizeChange?: (pageSize: number) => void;
+    pageSizeOptions?: readonly number[];
   };
 }) {
   const [sorting, setSorting] = React.useState<SortingState>(initialSorting ?? []);
@@ -192,7 +201,12 @@ export function DataTable<TData, TValue>({
             ? bulkToolbar(selectedRows, clearSelection)
             : toolbar?.(table)}
         </div>
-        <DataTableSettings table={table} storageKey={storageKey} />
+        <DataTableSettings
+          table={table}
+          storageKey={storageKey}
+          onPageSizeChange={server?.onPageSizeChange}
+          pageSizeOptions={server?.pageSizeOptions}
+        />
       </div>
       {/* A light single border here (not the heavier ring the surrounding Card
           already uses) — these tables are always inside a Card, so matching
@@ -225,8 +239,11 @@ export function DataTable<TData, TValue>({
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={allColumns.length} className="h-24 text-center text-muted-foreground">
-                  {emptyMessage}
+                <TableCell colSpan={allColumns.length} className="p-0">
+                  <EmptyState
+                    noun={emptyNoun}
+                    isFiltered={isFiltered || (globalFilter !== "" || columnFilters.length > 0)}
+                  />
                 </TableCell>
               </TableRow>
             )}

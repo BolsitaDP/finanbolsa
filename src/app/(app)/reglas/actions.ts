@@ -15,15 +15,29 @@ type RuleInput = {
   actions: RuleAction[];
 };
 
-export async function createRule(input: RuleInput) {
+/**
+ * Next sort order for a new rule.
+ *
+ * Exported because the import flow creates rules too, and it used to hardcode
+ * 999 for every one of them. That made precedence a coin flip: the engine
+ * applies rules ordered by `sortOrder`, so with dozens of rules tied at 999,
+ * which one won depended on whatever order SQLite happened to return rows in —
+ * and nothing in the UI let the user see or change it. Same source of truth
+ * for both creators is the fix; a stable order is what makes "later rules
+ * override earlier ones" mean something.
+ */
+export async function nextRuleSortOrder(): Promise<number> {
   const existing = await db.select({ sortOrder: rules.sortOrder }).from(rules);
-  const maxOrder = existing.reduce((m, r) => Math.max(m, r.sortOrder), 0);
+  return existing.reduce((m, r) => Math.max(m, r.sortOrder), 0) + 1;
+}
+
+export async function createRule(input: RuleInput) {
   await db.insert(rules).values({
     name: input.name,
     matchType: input.matchType,
     conditions: input.conditions,
     actions: input.actions,
-    sortOrder: maxOrder + 1,
+    sortOrder: await nextRuleSortOrder(),
   });
   revalidatePath("/reglas");
 }

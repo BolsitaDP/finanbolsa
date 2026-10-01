@@ -50,6 +50,20 @@
       "when": 1790474214215,
       "tag": "0006_condemned_zzzax",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1790515146339,
+      "tag": "0007_bent_argent",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1790516129975,
+      "tag": "0008_wooden_jimmy_woo",
+      "breakpoints": true
     }
   ]
 }

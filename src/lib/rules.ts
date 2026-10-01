@@ -10,6 +10,21 @@ export type RuleMatchable = {
   amountMinor: number;
 };
 
+/**
+ * Operators where an empty value would mean "matches everything".
+ *
+ * Split out because it is the one place `conditionMatches` overrides normal
+ * string semantics, and the reason has to stay visible: `"abc".includes("")` is
+ * `true` in JavaScript, and a saved rule with an empty box in it should not
+ * become a rule that catches the whole ledger.
+ */
+const SUBSTRING_OPS: ReadonlySet<RuleCondition["op"]> = new Set([
+  "contains",
+  "not_contains",
+  "starts_with",
+  "ends_with",
+]);
+
 function fieldValue(tx: RuleMatchable, field: RuleCondition["field"]): string {
   switch (field) {
     case "description":
@@ -49,6 +64,14 @@ function conditionMatches(tx: RuleMatchable, condition: RuleCondition): boolean 
 
   const value = fieldValue(tx, condition.field).toLowerCase();
   const target = condition.value.toLowerCase();
+
+  // An empty value on a substring operator is a catch-all, not a match: in
+  // JavaScript every string contains "", so a half-filled condition left in a
+  // saved rule would file every transaction into one category. `equals` and
+  // `not_equals` are exempt, because "the description is empty" is a real
+  // question — that is how a rule targets uncategorised or payee-less rows.
+  if (target.trim() === "" && SUBSTRING_OPS.has(condition.op)) return false;
+
   switch (condition.op) {
     case "contains":
       return value.includes(target);

@@ -191,6 +191,37 @@ export const projects = sqliteTable("projects", {
   archivedAt: integer("archived_at", { mode: "timestamp" }),
 });
 
+// --- exchange rates ---------------------------------------------------------
+// One row per (month, from, to). `rate` is how many units of `toCurrency` one
+// unit of `fromCurrency` is worth: from=USD, to=COP, rate=4000 means 1 USD =
+// 4000 COP. Storing the pair explicitly rather than against the base currency
+// keeps each row's meaning local — it never depends on a setting that can change.
+//
+// Manual entry is deliberate. The app is single-user and self-hosted, and
+// reading a TRM from a public API adds a dependency, a failure mode and a rate
+// limit in exchange for something a person types in ten seconds a month. The
+// reverse direction is derived by inverting rather than stored, so the two
+// directions can never disagree.
+export const exchangeRates = sqliteTable(
+  "exchange_rates",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    // 'YYYY-MM'
+    month: text("month").notNull(),
+    fromCurrency: text("from_currency").notNull(),
+    toCurrency: text("to_currency").notNull(),
+    rate: real("rate").notNull(),
+    note: text("note"),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .default(sql`(unixepoch())`),
+  },
+  (t) => [
+    uniqueIndex("exchange_rates_month_pair_idx").on(t.month, t.fromCurrency, t.toCurrency),
+    index("exchange_rates_month_idx").on(t.month),
+  ]
+);
+
 // --- settings -----------------------------------------------------------
 // Single-row table: app-wide settings. Fixed lookup catalogs (account types,
 // currencies, transaction types, statuses) live as TS enums in src/lib/enums.ts
@@ -202,4 +233,12 @@ export const settings = sqliteTable("settings", {
   startDate: integer("start_date", { mode: "timestamp" }).notNull(),
   owner: text("owner"),
   notes: text("notes"),
+  // Whether multi-currency amounts get converted into `baseCurrency` for the
+  // budget and the net-worth total. Opt-in on purpose: with it off, movements
+  // in other currencies are reported per currency and the app says nothing
+  // about missing rates. A missing rate only becomes worth warning about once
+  // someone has asked for converted totals.
+  convertCurrency: integer("convert_currency", { mode: "boolean" })
+    .notNull()
+    .default(false),
 });

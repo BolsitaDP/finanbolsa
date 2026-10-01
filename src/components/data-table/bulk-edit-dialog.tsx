@@ -19,16 +19,26 @@ export function BulkEditDialog({
   title,
   count,
   onApply,
+  onClosed,
+  blockedReason,
+  notice,
   children,
 }: {
   trigger: React.ReactElement;
   title: string;
   count: number;
   onApply: () => Promise<void>;
+  /** Called when the dialog closes, so the caller can clear its field state. */
+  onClosed?: () => void;
+  /** When set, "Aplicar" is disabled and this explains why. */
+  blockedReason?: string | null;
+  /** A non-blocking warning rendered above the fields. */
+  notice?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const blocked = Boolean(blockedReason);
 
   function handleApply() {
     startTransition(async () => {
@@ -43,7 +53,16 @@ export function BulkEditDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        // Reset the field state on close. Otherwise reopening the dialog shows
+        // every checkbox still ticked from last time, and "Aplicar" then writes
+        // a patch the user never chose in this session.
+        if (!next) onClosed?.();
+      }}
+    >
       <DialogTrigger render={trigger} />
       <DialogContent className="max-w-xl">
         <DialogHeader>
@@ -53,12 +72,14 @@ export function BulkEditDialog({
             {count === 1 ? "elemento seleccionado" : "elementos seleccionados"}.
           </DialogDescription>
         </DialogHeader>
+        {notice}
         <div className="flex flex-col gap-4">{children}</div>
         <DialogFooter>
-          <Button onClick={handleApply} disabled={isPending}>
+          <Button onClick={handleApply} disabled={isPending || blocked}>
             Aplicar a {count}
           </Button>
         </DialogFooter>
+        {blocked ? <p className="text-sm text-destructive">{blockedReason}</p> : null}
       </DialogContent>
     </Dialog>
   );

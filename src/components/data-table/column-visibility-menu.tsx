@@ -16,14 +16,23 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 
-const PAGE_SIZE_OPTIONS = [15, 20, 30, 50, 100];
+const DEFAULT_PAGE_SIZE_OPTIONS = [15, 20, 30, 50, 100];
 
 export function DataTableSettings<TData>({
   table,
   storageKey,
+  onPageSizeChange,
+  pageSizeOptions,
 }: {
   table: Table<TData>;
   storageKey?: string;
+  /**
+   * Supplied by tables that page on the server. In server mode TanStack's
+   * pagination state is rebuilt from props on every render, so writing to it
+   * has no lasting effect — the caller has to be told instead.
+   */
+  onPageSizeChange?: (pageSize: number) => void;
+  pageSizeOptions?: readonly number[];
 }) {
   const columns = table.getAllLeafColumns().filter((c) => c.getCanHide());
 
@@ -31,16 +40,23 @@ export function DataTableSettings<TData>({
     if (!storageKey) return;
     try {
       const savedPageSize = localStorage.getItem(`finanbolsa:page-size:${storageKey}`);
-      if (savedPageSize && PAGE_SIZE_OPTIONS.includes(Number(savedPageSize))) {
+      // Server-paged tables ignore localStorage: the size lives in the URL,
+      // so restoring a stale one from a previous session would fight it.
+      if (onPageSizeChange) return;
+      if (savedPageSize && DEFAULT_PAGE_SIZE_OPTIONS.includes(Number(savedPageSize))) {
         table.setPageSize(Number(savedPageSize));
       }
     } catch {
       // Ignore inaccessible storage and keep the default page size.
     }
-  }, [storageKey, table]);
+  }, [storageKey, table, onPageSizeChange]);
 
   function changePageSize(value: string) {
     const nextPageSize = Number(value);
+    if (onPageSizeChange) {
+      onPageSizeChange(nextPageSize);
+      return;
+    }
     table.setPageSize(nextPageSize);
     if (!storageKey) return;
     try {
@@ -97,7 +113,7 @@ export function DataTableSettings<TData>({
                 value={table.getState().pagination.pageSize}
                 onChange={(e) => changePageSize(e.target.value)}
               >
-                {PAGE_SIZE_OPTIONS.map((option) => (
+                {(pageSizeOptions ?? DEFAULT_PAGE_SIZE_OPTIONS).map((option) => (
                   <option key={option} value={option}>
                     {option} filas
                   </option>

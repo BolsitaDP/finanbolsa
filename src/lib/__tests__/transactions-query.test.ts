@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildTransactionQuery,
+  PAGE_SIZE_OPTIONS,
   escapeLikePattern,
   filtersToQueryString,
   parseTransactionFilters,
@@ -34,11 +35,78 @@ describe("parseTransactionFilters", () => {
         q: "rappi",
         type: "expense",
         account: "acc-2",
+        category: "cat-3",
+        month: "2026-08",
         sort: "amountMinor",
         dir: "asc",
         page: "3",
+        pageSize: "100",
       })
-    ).toEqual({ q: "rappi", type: "expense", account: "acc-2", sort: "amountMinor", dir: "asc", page: 3 });
+    ).toEqual({
+      q: "rappi",
+      type: "expense",
+      account: "acc-2",
+      category: "cat-3",
+      month: "2026-08",
+      sort: "amountMinor",
+      dir: "asc",
+      page: 3,
+      pageSize: 100,
+    });
+  });
+
+  it("defaults the month filter to all", () => {
+    expect(parseTransactionFilters({}).month).toBe("all");
+    expect(parseTransactionFilters({ month: "" }).month).toBe("all");
+    expect(parseTransactionFilters({ month: "all" }).month).toBe("all");
+  });
+
+  it("rejects a month that is not the exact YYYY-MM shape", () => {
+    // These values reach the SQL as a strftime comparison, so anything loose
+    // enough to match no month would silently show an empty list — which reads
+    // as "I spent nothing" rather than as a broken link. A hand-edited or stale
+    // URL has to degrade to "all" instead.
+    for (const month of ["2026-13", "2026-00", "26-08", "2026-8", "agosto", "2026-08-01", "../2026-08"]) {
+      expect(parseTransactionFilters({ month }).month, month).toBe("all");
+    }
+  });
+
+  it("round-trips the month filter through the query string", () => {
+    // The audit links are built from these, so losing the month on the way out
+    // would open a total onto the category's whole history.
+    const filters = parseTransactionFilters({ category: "cat-3", month: "2026-08" });
+    expect(filtersToQueryString(filters)).toBe("?category=cat-3&month=2026-08");
+  });
+
+  it("omits the month from the query string when it is the default", () => {
+    expect(filtersToQueryString(parseTransactionFilters({ category: "cat-3" }))).toBe(
+      "?category=cat-3"
+    );
+  });
+
+  it("defaults the category filter to all, including when empty", () => {
+    expect(parseTransactionFilters({}).category).toBe("all");
+    expect(parseTransactionFilters({ category: "" }).category).toBe("all");
+  });
+
+  it("accepts the uncategorised shortcut", () => {
+    // "none" is the weekly chore: clear whatever arrived without a category.
+    expect(parseTransactionFilters({ category: "none" }).category).toBe("none");
+  });
+
+  it("clamps page size to the offered options", () => {
+    // The page size arrives from the URL, so an arbitrary value has to be
+    // rejected rather than passed to LIMIT.
+    expect(parseTransactionFilters({ pageSize: "1000" }).pageSize).toBe(PAGE_SIZE);
+    expect(parseTransactionFilters({ pageSize: "7" }).pageSize).toBe(PAGE_SIZE);
+    expect(parseTransactionFilters({ pageSize: "-50" }).pageSize).toBe(PAGE_SIZE);
+    expect(parseTransactionFilters({ pageSize: "abc" }).pageSize).toBe(PAGE_SIZE);
+  });
+
+  it("accepts every offered page size", () => {
+    for (const size of PAGE_SIZE_OPTIONS) {
+      expect(parseTransactionFilters({ pageSize: String(size) }).pageSize).toBe(size);
+    }
   });
 
   it("takes the first value when a param repeats", () => {
@@ -102,10 +170,16 @@ describe("buildTransactionQuery", () => {
     expect(q.orderBy).toHaveLength(1);
   });
 
-  it("pages with a fixed page size", () => {
+  it("pages with the configured page size", () => {
     const q = buildTransactionQuery(filters({ page: 4 }));
     expect(q.limit).toBe(PAGE_SIZE);
     expect(q.offset).toBe(3 * PAGE_SIZE);
+  });
+
+  it("honours a non-default page size in both limit and offset", () => {
+    const q = buildTransactionQuery(filters({ page: 3, pageSize: 25 }));
+    expect(q.limit).toBe(25);
+    expect(q.offset).toBe(50);
   });
 
   it("starts at offset 0 for the first page", () => {
@@ -142,9 +216,11 @@ describe("filtersToQueryString", () => {
       q: "rappi",
       type: "expense",
       account: "acc-2",
+      category: "none",
       sort: "amountMinor",
       dir: "asc",
       page: 3,
+      pageSize: 100,
     });
     const qs = filtersToQueryString(original);
     expect(parseTransactionFilters(Object.fromEntries(new URLSearchParams(qs)))).toEqual(original);

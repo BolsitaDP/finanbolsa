@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, isNull } from "drizzle-orm";
 import { FileJson, FileSpreadsheet, FileText } from "lucide-react";
 
 import { db } from "@/db";
@@ -7,6 +7,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { SettingsForm } from "@/components/settings-form";
 import { DangerZone } from "@/components/danger-zone";
+import { ExchangeRatesCard } from "@/components/exchange-rates-card";
+import { listRates } from "@/app/(app)/configuracion/rates-actions";
+import { transactionMonth } from "@/lib/month-sql";
 import { ImportHistoryCard } from "@/components/import-history-card";
 import { getImportBatches } from "@/app/(app)/importar/actions";
 import {
@@ -26,9 +29,21 @@ import {
 // keep serving that stale snapshot in production instead of live data.
 export const dynamic = "force-dynamic";
 
+
+
 export default async function ConfiguracionPage() {
-  const [s, txCount, catCount, payeeCount, ruleCount, budgetCount, accountCount, importBatches] =
-    await Promise.all([
+  const [
+    s,
+    txCount,
+    catCount,
+    payeeCount,
+    ruleCount,
+    budgetCount,
+    accountCount,
+    importBatches,
+    rates,
+    foreignMonths,
+  ] = await Promise.all([
       db.select().from(settings).where(eq(settings.id, "default")).then((r) => r[0]),
       db.select({ id: transactions.id }).from(transactions).then((r) => r.length),
       db.select({ id: categories.id }).from(categories).then((r) => r.length),
@@ -37,7 +52,41 @@ export default async function ConfiguracionPage() {
       db.select({ id: budgets.id }).from(budgets).then((r) => r.length),
       db.select({ id: accounts.id }).from(accounts).then((r) => r.length),
       getImportBatches(),
+      listRates(),
+      // Which months contain movements in some currency at all. Used to decide
+      // what "Actualizar TRM" would fetch — fetching every month since the app
+      // began would be dozens of pointless requests from a Raspberry Pi.
+      db
+        .selectDistinct({
+          month: transactionMonth,
+          currency: transactions.currency,
+        })
+        .from(transactions)
+        .where(isNull(transactions.deletedAt))
+        .orderBy(transactionMonth),
+      // Months that contain movements in some currency, paired with that
+      // currency. Filtered against the base currency in JS below, since that
+      // value comes from the same batch. Only these months are worth a rate:
+      // fetching every month since the app began would be dozens of pointless
+      // requests from a Raspberry Pi.
+      db
+        .selectDistinct({
+          month: transactionMonth,
+          currency: transactions.currency,
+        })
+        .from(transactions)
+        .where(isNull(transactions.deletedAt))
+        .orderBy(transactionMonth),
     ]);
+
+  // Drop the base currency: only other currencies need a rate. Kept as
+  // (month, currency) pairs so the refresh fetches exactly what exists rather
+  // than every currency for every month.
+  const base = s?.baseCurrency ?? "COP";
+  const foreignPairs = foreignMonths
+    .filter((r) => r.currency !== base)
+    .map((r) => ({ month: r.month, currency: r.currency }))
+    .sort((a, b) => (a.month === b.month ? a.currency.localeCompare(b.currency) : a.month.localeCompare(b.month)));
 
   return (
     <div className="flex flex-col gap-6">
@@ -62,6 +111,13 @@ export default async function ConfiguracionPage() {
           </p>
         </CardContent>
       </Card>
+
+      <ExchangeRatesCard
+        rates={rates}
+        baseCurrency={s?.baseCurrency ?? "COP"}
+        convertCurrency={s?.convertCurrency ?? false}
+        suggestedPairs={foreignPairs}
+      />
 
       <Card className="max-w-md">
         <CardHeader>

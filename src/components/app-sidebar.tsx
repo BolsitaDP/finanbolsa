@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   LayoutDashboard,
   Landmark,
@@ -14,6 +14,7 @@ import {
   Upload,
   Repeat,
   Briefcase,
+  ListChecks as ListChecksIcon,
 } from "lucide-react";
 
 import {
@@ -42,8 +43,20 @@ const items = [
   { title: "Configuración", url: "/configuracion", icon: Settings },
 ];
 
-export function AppSidebar() {
+export function AppSidebar({ uncategorizedCount = 0 }: { uncategorizedCount?: number }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  // "Sin categoría" is a view, not a filter to go hunting for: the weekly
+  // chore is clearing the uncategorised backlog, and the only way to reach it
+  // used to be scanning the table for em-dashes.
+  const itemsWithBadge = items.map((item) =>
+    item.url === "/transacciones" && uncategorizedCount > 0
+      ? { ...item, badge: uncategorizedCount }
+      : item
+  );
+
+  const hasBacklog = uncategorizedCount > 0;
 
   return (
     <Sidebar>
@@ -55,14 +68,37 @@ export function AppSidebar() {
           <SidebarGroupLabel>Navegación</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {items.map((item) => (
+              {/* The weekly chore made reachable: everything that arrived
+                  without a category, in one click. The count next to
+                  "Transacciones" says there is a backlog; this is the place to
+                  clear it. */}
+              {hasBacklog ? (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    isActive={pathname === "/transacciones" && searchParams.get("category") === "none"}
+                    render={<Link href="/transacciones?category=none" />}
+                  >
+                    <ListChecksIcon />
+                    <span className="flex-1">Sin categorizar</span>
+                    <span className="rounded-full bg-destructive/15 px-1.5 text-xs font-medium text-destructive tabular-nums">
+                      {uncategorizedCount}
+                    </span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ) : null}
+              {itemsWithBadge.map((item) => (
                 <SidebarMenuItem key={item.url}>
                   <SidebarMenuButton
                     isActive={pathname === item.url}
                     render={<Link href={item.url} />}
                   >
                     <item.icon />
-                    <span>{item.title}</span>
+                    <span className="flex-1">{item.title}</span>
+            {"badge" in item && item.badge ? (
+              <span className="rounded-full bg-destructive/15 px-1.5 text-xs font-medium text-destructive tabular-nums">
+                {item.badge}
+              </span>
+            ) : null}
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}

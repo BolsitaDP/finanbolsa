@@ -1,6 +1,8 @@
 import { and, asc, desc, eq, isNull, like, or, sql, type SQL } from "drizzle-orm";
 
 import { accounts, categories, payees, transactions } from "@/db/schema";
+import { transactionMonth } from "@/lib/month-sql";
+import { TRANSACTION_TYPES, type TransactionType } from "@/lib/enums";
 
 /**
  * Server-side filtering, sorting and pagination for the transactions table.
@@ -17,8 +19,19 @@ import { accounts, categories, payees, transactions } from "@/db/schema";
 
 export const PAGE_SIZE = 50;
 
-export const TRANSACTION_TYPES = ["expense", "income", "transfer"] as const;
-export type TransactionType = (typeof TRANSACTION_TYPES)[number];
+/**
+ * Page sizes offered for the server-driven table.
+ *
+ * The "Filas por página" picker used to write to TanStack's pagination state,
+ * which the server-mode table overwrites from props on every render — so the
+ * choice looked like it saved and did nothing. The size is part of the URL
+ * instead, like every other thing about what the table shows.
+ */
+export const PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
+
+// TRANSACTION_TYPES is imported, not redeclared: this file used to define its
+// own copy, which meant two sources of truth for the same enum and a silent
+// failure waiting for whoever added a type to only one of them.
 
 /**
  * Whitelist of sortable columns, mapped to real SQL.
@@ -41,24 +54,42 @@ export const TRANSACTION_SORTS = {
 
 export type TransactionSort = keyof typeof TRANSACTION_SORTS;
 
+/** A month filter is only accepted in the exact 'YYYY-MM' shape monthKey() produces. */
+const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+
 export const DEFAULT_SORT: TransactionSort = "date";
 
 export type TransactionFilters = {
   q: string;
   type: TransactionType | "all";
   account: string; // "all" or an account id
+  /** "all", "none" for uncategorised, or a category id. */
+  category: string;
+  /**
+   * 'YYYY-MM' to narrow to one calendar month, or "all".
+   *
+   * This exists so every total in the app can be audited: a budget envelope
+   * showing "$412.000" links here, and the list that comes back has to be the
+   * rows that made the number up. Without the month, a category total would
+   * open onto its whole history and the arithmetic would not be checkable.
+   */
+  month: string;
   sort: TransactionSort;
   dir: "asc" | "desc";
   page: number; // 1-based
+  pageSize: number;
 };
 
 export const DEFAULT_FILTERS: TransactionFilters = {
   q: "",
   type: "all",
   account: "all",
+  category: "all",
+  month: "all",
   sort: DEFAULT_SORT,
   dir: "desc",
   page: 1,
+  pageSize: PAGE_SIZE,
 };
 
 function first(value: string | string[] | undefined): string | undefined {
@@ -75,9 +106,12 @@ export function parseTransactionFilters(
 ): TransactionFilters {
   const q = (first(params.q) ?? "").trim();
   const rawType = first(params.type);
+  const rawCategory = first(params.category);
+  const rawMonth = first(params.month);
   const rawSort = first(params.sort);
   const rawDir = first(params.dir);
   const rawPage = Number(first(params.page));
+  const rawPageSize = Number(first(params.pageSize));
 
   const type = TRANSACTION_TYPES.find((t) => t === rawType);
   const sort = (Object.keys(TRANSACTION_SORTS) as string[]).find((s) => s === rawSort);
@@ -86,11 +120,16 @@ export function parseTransactionFilters(
     q,
     type: type ?? "all",
     account: first(params.account) ?? "all",
+    category: rawCategory && rawCategory !== "" ? rawCategory : "all",
+    month: MONTH_PATTERN.test(rawMonth ?? "") ? rawMonth! : "all",
     sort: (sort as TransactionSort | undefined) ?? DEFAULT_SORT,
     // Newest first is what people expect from a transaction list, so `desc` is
     // the default rather than TanStack's ascending-first convention.
     dir: rawDir === "asc" ? "asc" : "desc",
     page: Number.isInteger(rawPage) && rawPage > 0 ? rawPage : 1,
+    pageSize: (PAGE_SIZE_OPTIONS as readonly number[]).includes(rawPageSize)
+      ? rawPageSize
+      : PAGE_SIZE,
   };
 }
 
@@ -128,6 +167,21 @@ export function buildTransactionQuery(filters: TransactionFilters): TransactionQ
   if (filters.account !== "all") {
     conditions.push(eq(transactions.accountId, filters.account));
   }
+  if (filters.category === "none") {
+    // "Sin categoría" is the weekly chore: reviewing what arrived uncategorised
+    // and fixing it. There was no way to list those rows at all — the filter
+    // simply did not exist, so the only option was scanning for the em-dashes.
+    conditions.push(isNull(transactions.categoryId));
+  } else if (filters.category !== "all") {
+    conditions.push(eq(transactions.categoryId, filters.category));
+  }
+
+  if (filters.month !== "all") {
+    // `transactionMonth`, not a hand-rolled strftime: the month a total was
+    // counted in has to be the same month this filter selects, or "auditar este
+    // número" would show a different set of rows than the number came from.
+    conditions.push(eq(transactionMonth, filters.month));
+  }
 
   if (filters.q) {
     // Mirrors what the client-side filter used to match: the resolved labels,
@@ -149,21 +203,53 @@ export function buildTransactionQuery(filters: TransactionFilters): TransactionQ
   return {
     where: conditions.length ? and(...conditions) : undefined,
     orderBy: Array.isArray(orderBy) ? orderBy : [orderBy],
-    limit: PAGE_SIZE,
-    offset: (filters.page - 1) * PAGE_SIZE,
+    limit: filters.pageSize,
+    offset: (filters.page - 1) * filters.pageSize,
     page: filters.page,
   };
 }
 
-/** Serialises filters back to a query string, omitting defaults to keep URLs short. */
-export function filtersToQueryString(filters: TransactionFilters): string {
+/** Serialises filters back to a query string, omitting defaults to keep URLs short. */export function filtersToQueryString(filters: TransactionFilters): string {
   const params = new URLSearchParams();
   if (filters.q) params.set("q", filters.q);
   if (filters.type !== "all") params.set("type", filters.type);
   if (filters.account !== "all") params.set("account", filters.account);
+  if (filters.category !== "all") params.set("category", filters.category);
+  if (filters.month !== "all") params.set("month", filters.month);
   if (filters.sort !== DEFAULT_SORT) params.set("sort", filters.sort);
   if (filters.dir !== "desc") params.set("dir", filters.dir);
   if (filters.page > 1) params.set("page", String(filters.page));
+  if (filters.pageSize !== PAGE_SIZE) params.set("pageSize", String(filters.pageSize));
   const qs = params.toString();
   return qs ? `?${qs}` : "";
+}
+/**
+ * The link that lets someone check where a total came from.
+ *
+ * Every sum the app shows is now computed in SQL (see aggregates.ts), which
+ * is fast but opaque: "$412.000" is no longer something you can read off a
+ * loop. This points at the transaction list filtered to exactly the rows that
+ * produced it, which is the whole point of ROADMAP §3.4 — a number you cannot
+ * audit is a number you cannot trust.
+ *
+ * Built here rather than inline so every total links the same way, and so the
+ * month is never dropped by accident: a category total opened without its
+ * month shows the category's whole history, which does not add up to anything.
+ */
+export function auditLink(filters: {
+  category?: string;
+  month?: string;
+  type?: TransactionType;
+  account?: string;
+  q?: string;
+}): string {
+  const merged: TransactionFilters = {
+    ...DEFAULT_FILTERS,
+    q: filters.q ?? "",
+    type: filters.type ?? "all",
+    account: filters.account ?? "all",
+    category: filters.category ?? "all",
+    month: filters.month ?? "all",
+  };
+  return `/transacciones${filtersToQueryString(merged)}`;
 }

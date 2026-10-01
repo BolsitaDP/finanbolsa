@@ -51,6 +51,27 @@ export function ReglasTable({
   const columns: ColumnDef<Row>[] = React.useMemo(
     () => [
       {
+        // The engine applies rules in `sortOrder` and later ones override
+        // earlier ones, but the order was invisible — so when a category
+        // changed unexpectedly there was no way to see which rule won, let
+        // alone understand why. Showing the number makes the precedence
+        // legible; the page already queries in this order.
+        id: "sortOrder",
+        accessorFn: (r) => r.sortOrder,
+        header: () => (
+          <div className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+            Orden
+          </div>
+        ),
+        cell: ({ row }) => (
+          <span className="font-mono text-sm text-muted-foreground tabular-nums">
+            {row.original.sortOrder}
+          </span>
+        ),
+        enableSorting: false,
+        meta: { label: "Orden", className: "w-16" },
+      },
+      {
         id: "name",
         accessorFn: (r) => r.name ?? `Regla #${r.id}`,
         header: ({ column }) => <DataTableColumnHeader column={column} title="Nombre" />,
@@ -122,7 +143,7 @@ export function ReglasTable({
       data={filtered}
       pageSize={20}
       getRowId={(row) => String(row.id)}
-      emptyMessage="No hay reglas que coincidan."
+      emptyNoun="reglas"
       storageKey="reglas"
       bulkToolbar={(selected, clear) => {
         const ids = selected.map((r) => r.id);

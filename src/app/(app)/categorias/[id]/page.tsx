@@ -26,6 +26,7 @@ import { monthlyAmounts, monthKey } from "@/lib/spending-stats";
 import { monthLabel } from "@/lib/month";
 import { groupSplitsByTransaction, buildAllocations } from "@/lib/splits";
 import { formatDate, formatMoney } from "@/lib/format";
+import { MonthSwitcher } from "@/components/month-switcher";
 import { getAllProjectNames } from "@/app/(app)/proyectos/actions";
 
 export default async function CategoryDetailPage({
@@ -307,7 +308,8 @@ export default async function CategoryDetailPage({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <CardTitle>{filteredCategoryTx.length} transacciones</CardTitle>
             <div className="flex flex-wrap items-center gap-2">
-              {month && (
+              <MonthSwitcher month={month ?? monthKey(new Date())} />
+          {month && (
                 <Link
                   href={filterHref({ month: null })}
                   className="flex items-center gap-1 rounded-full border bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"

@@ -1,4 +1,4 @@
-import { asc, isNull } from "drizzle-orm";
+import { asc, count, isNull } from "drizzle-orm";
 import { PlusIcon } from "lucide-react";
 
 import { db } from "@/db";
@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { AccountFormDialog } from "@/components/account-form-dialog";
 import { CuentasTable } from "@/components/cuentas-table";
-import { currentBalances } from "@/lib/balance";
+import { currentBalances } from "@/lib/aggregates";
 
 export default async function CuentasPage({
   searchParams,
@@ -15,13 +15,25 @@ export default async function CuentasPage({
   searchParams: Promise<{ q?: string }>;
 }) {
   const { q } = await searchParams;
-  const [allAccounts, allTransactions] = await Promise.all([
+  // Both of these used to come out of one full transaction scan: the balances
+  // by re-walking it in JS, and the per-account counts by counting it. Two
+  // aggregates replace the scan — and the counts are what let the table offer
+  // "archivar" instead of a delete the foreign key is going to reject.
+  const [allAccounts, balances, countRows] = await Promise.all([
     db.select().from(accounts).orderBy(asc(accounts.name)),
-    db.select().from(transactions).where(isNull(transactions.deletedAt)),
+    currentBalances(),
+    db
+      .select({ accountId: transactions.accountId, total: count() })
+      .from(transactions)
+      .where(isNull(transactions.deletedAt))
+      .groupBy(transactions.accountId),
   ]);
   // Maps aren't a valid Server -> Client Component prop (not JSON-serializable),
   // so the computed balances cross that boundary as a plain object.
-  const balances = Object.fromEntries(currentBalances(allAccounts, allTransactions));
+  const balanceMap = Object.fromEntries(balances);
+  const transactionCounts: Record<string, number> = Object.fromEntries(
+    countRows.map((row) => [row.accountId, row.total])
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -46,7 +58,12 @@ export default async function CuentasPage({
           <CardTitle>{allAccounts.length} cuentas</CardTitle>
         </CardHeader>
         <CardContent>
-          <CuentasTable accounts={allAccounts} balances={balances} initialSearch={q} />
+          <CuentasTable
+            accounts={allAccounts}
+            balances={balanceMap}
+            transactionCounts={transactionCounts}
+            initialSearch={q}
+          />
         </CardContent>
       </Card>
     </div>

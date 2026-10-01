@@ -1,9 +1,9 @@
 import Link from "next/link";
-import { desc, isNull } from "drizzle-orm";
+import { desc, eq, isNull } from "drizzle-orm";
 import { ArrowDownIcon, ArrowUpIcon } from "lucide-react";
 
 import { db } from "@/db";
-import { accounts, budgets, categories, transactions, transactionSplits } from "@/db/schema";
+import { accounts, budgets, categories, settings, transactions } from "@/db/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -15,11 +15,29 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { NetWorthChart, CHART_COLORS } from "@/components/net-worth-chart";
-import { currentBalances, netWorthTrend } from "@/lib/balance";
-import { spendByCategoryForMonth, totalForMonth } from "@/lib/spending-stats";
-import { groupSplitsByTransaction } from "@/lib/splits";
+import { AuditedAmount } from "@/components/audited-amount";
+import { auditLink } from "@/lib/transactions-query";
+import { summarizeMonth } from "@/lib/month-summary";
+import {
+  buildCategoryDeltas,
+  MonthOverMonthCard,
+} from "@/components/month-over-month";
+import { netWorthTrendFromMonthly } from "@/lib/balance";
+import {
+  currentBalances,
+  movementByAccountAndMonth,
+  spendByCategoryInMonth,
+  totalsByMonth,
+  totalsFor,
+} from "@/lib/aggregates";
 import { monthKey, monthLabel, shiftMonth } from "@/lib/month";
 import { formatDate, formatMoney } from "@/lib/format";
+import {
+  ACCOUNT_TYPE_LABELS,
+  TRANSACTION_TYPE_LABELS,
+  type AccountType,
+  type TransactionType,
+} from "@/lib/enums";
 
 function MonthDelta({ current, previous, higherIsBad }: { current: number; previous: number; higherIsBad: boolean }) {
   if (previous === 0) return null;
@@ -42,31 +60,96 @@ function MonthDelta({ current, previous, higherIsBad }: { current: number; previ
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  const [allAccounts, allTransactions, allCategories, allBudgets, allSplits] = await Promise.all([
+  const currentMonth = monthKey(new Date());
+  const lastMonth = shiftMonth(currentMonth, -1);
+  const TREND_MONTHS = 12;
+
+  // Everything the cards need is a GROUP BY, not a table scan. The full
+  // transaction list used to be loaded here just to be reduced in memory; at
+  // 50k rows that was 26 MB of payload for a page that only ever displays
+  // aggregates. See src/lib/aggregates.ts.
+  const [
+    allAccounts,
+    allCategories,
+    allBudgets,
+    settingsRow,
+    balances,
+    totals,
+    spendThisMonth,
+    spendLastMonth,
+  ] = await Promise.all([
     db.select().from(accounts),
-    db.select().from(transactions).where(isNull(transactions.deletedAt)),
     db.select().from(categories),
     db.select().from(budgets),
-    db.select().from(transactionSplits),
+    db.select().from(settings).where(eq(settings.id, "default")).then((r) => r[0]),
+    currentBalances(),
+    totalsByMonth([currentMonth, lastMonth]),
+    spendByCategoryInMonth(currentMonth),
+    // One extra GROUP BY, same cost as the one above. It buys the comparison
+    // card below, which is the question this page exists to answer.
+    spendByCategoryInMonth(lastMonth),
   ]);
-  const splitsByTx = groupSplitsByTransaction(allSplits);
+
+  // The trend reconstructs month-end balances by unwinding movements, which
+  // only needs each month's SUM — so the movements are summed by month in SQL
+  // rather than walked row by row.
+  const trend = netWorthTrendFromMonthly(
+    allAccounts,
+    balances,
+    await movementByAccountAndMonth(
+      shiftMonth(currentMonth, -(TREND_MONTHS - 1)),
+      currentMonth
+    ),
+    TREND_MONTHS
+  );
 
   const categoryName = new Map(allCategories.map((c) => [c.id, c.name]));
   const accountName = new Map(allAccounts.map((a) => [a.id, a.name]));
-  const balances = currentBalances(allAccounts, allTransactions);
-  const trend = netWorthTrend(allAccounts, allTransactions, 12);
 
-  const currentMonth = monthKey(new Date());
-  const lastMonth = shiftMonth(currentMonth, -1);
-
-  const expenseThisMonth = totalForMonth(allTransactions, currentMonth, "expense");
-  const expenseLastMonth = totalForMonth(allTransactions, lastMonth, "expense");
-  const incomeThisMonth = totalForMonth(allTransactions, currentMonth, "income");
-  const incomeLastMonth = totalForMonth(allTransactions, lastMonth, "income");
+  const expenseThisMonth = totalsFor(totals, currentMonth, "expense");
+  const expenseLastMonth = totalsFor(totals, lastMonth, "expense");
+  const incomeThisMonth = totalsFor(totals, currentMonth, "income");
+  const incomeLastMonth = totalsFor(totals, lastMonth, "income");
   const monthCurrencies = [...new Set([...expenseThisMonth.keys(), ...incomeThisMonth.keys()])];
 
-  const spendThisMonth = spendByCategoryForMonth(allTransactions, currentMonth, splitsByTx);
   const spendCurrencies = [...new Set(spendThisMonth.map((c) => c.currency))];
+
+  // ¿A dónde fue mi plata?, one sentence per currency, from the deltas the
+  // comparison card computes anyway. It cannot disagree with the table below
+  // it because it is the same pass, and it costs nothing extra.
+  const monthSummaries = [
+    ...new Set([...spendThisMonth, ...spendLastMonth].map((c) => c.currency)),
+  ].map((currency) => {
+    const deltas = buildCategoryDeltas(
+      spendThisMonth.filter((c) => c.currency === currency),
+      spendLastMonth.filter((c) => c.currency === currency),
+      Number.MAX_SAFE_INTEGER
+    );
+    const nameOf = (categoryId: string) => categoryName.get(categoryId) ?? categoryId;
+    const top = deltas.find((d) => d.delta > 0);
+    const bottom = deltas.find((d) => d.delta < 0);
+
+    return {
+      currency,
+      text: summarizeMonth({
+        currentLabel: monthLabel(currentMonth),
+        previousLabel: monthLabel(lastMonth),
+        currency,
+        currentTotal: expenseThisMonth.get(currency) ?? 0,
+        previousTotal: expenseLastMonth.get(currency) ?? 0,
+        topIncrease: top ? { name: nameOf(top.categoryId), amountMinor: top.delta } : null,
+        topDecrease: bottom ? { name: nameOf(bottom.categoryId), amountMinor: bottom.delta } : null,
+      }),
+    };
+  });
+
+  // The month-over-month card groups by currency, like the cards above it. With
+  // conversion switched off, foreign-currency spend is simply not in these
+  // totals — the same quiet rule the budget page follows, and for the same
+  // reason: mixing currencies without a rate would make the delta a fiction.
+  const comparisonCurrencies = settingsRow?.convertCurrency
+    ? [settingsRow.baseCurrency]
+    : [...new Set([...spendThisMonth, ...spendLastMonth].map((c) => c.currency))];
 
   const budgetsThisMonth = allBudgets.filter((b) => b.month === currentMonth);
   const overBudgetCount = budgetsThisMonth.filter((b) => {
@@ -77,7 +160,6 @@ export default async function DashboardPage() {
   const netWorthCurrencies = [...new Set(allAccounts.map((a) => a.currency))].filter((currency) =>
     trend.some((p) => (p.totalsByCurrency[currency] ?? 0) !== 0)
   );
-
   const recentTransactions = await db
     .select()
     .from(transactions)
@@ -93,6 +175,16 @@ export default async function DashboardPage() {
           {monthLabel(currentMonth)} — vista general de tus cuentas y movimientos.
         </p>
       </div>
+
+      {monthSummaries.length > 0 ? (
+        <div className="flex flex-col gap-1 rounded-lg border border-border/60 bg-muted/30 p-4">
+          {monthSummaries.map((summary) => (
+            <p key={summary.currency} className="text-sm">
+              {summary.text}
+            </p>
+          ))}
+        </div>
+      ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {monthCurrencies.map((currency) => (
@@ -177,9 +269,13 @@ export default async function DashboardPage() {
                           style={{ width: `${(c.amountMinor / max) * 100}%` }}
                         />
                       </div>
-                      <span className="w-28 shrink-0 text-right text-sm font-medium">
-                        {formatMoney(c.amountMinor, currency)}
-                      </span>
+                      <AuditedAmount
+                        amountMinor={c.amountMinor}
+                        currency={currency}
+                        href={auditLink({ category: c.categoryId, month: currentMonth, type: "expense" })}
+                        className="w-28 shrink-0 text-right text-sm font-medium"
+                        title={`Ver los movimientos de ${categoryName.get(c.categoryId) ?? c.categoryId} en ${currentMonth}`}
+                      />
                     </div>
                   ))}
                 </div>
@@ -188,6 +284,27 @@ export default async function DashboardPage() {
           </CardContent>
         </Card>
       )}
+
+      {comparisonCurrencies.map((currency) => {
+        const deltas = buildCategoryDeltas(
+          spendThisMonth.filter((c) => c.currency === currency),
+          spendLastMonth.filter((c) => c.currency === currency),
+          8
+        );
+        if (deltas.length === 0) return null;
+        return (
+          <MonthOverMonthCard
+            key={currency}
+            deltas={deltas}
+            categoryName={categoryName}
+            currentMonth={currentMonth}
+            previousMonth={lastMonth}
+            currentTotal={expenseThisMonth.get(currency) ?? 0}
+            previousTotal={expenseLastMonth.get(currency) ?? 0}
+            currency={currency}
+          />
+        );
+      })}
 
       <Card>
         <CardHeader>
@@ -231,7 +348,7 @@ export default async function DashboardPage() {
               {allAccounts.map((a) => (
                 <TableRow key={a.id}>
                   <TableCell className="font-medium">{a.name}</TableCell>
-                  <TableCell className="capitalize">{a.type.replace("_", " ")}</TableCell>
+                  <TableCell>{ACCOUNT_TYPE_LABELS[a.type as AccountType] ?? a.type}</TableCell>
                   <TableCell>{a.currency}</TableCell>
                   <TableCell className="text-right">
                     {formatMoney(balances.get(a.id) ?? a.referenceBalanceMinor, a.currency)}
@@ -278,7 +395,7 @@ export default async function DashboardPage() {
                   </TableCell>
                   <TableCell>
                     <Badge variant={tx.type === "expense" ? "destructive" : "secondary"}>
-                      {tx.type}
+                      {TRANSACTION_TYPE_LABELS[tx.type as TransactionType] ?? tx.type}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right">

@@ -15,8 +15,15 @@ import { BulkDeleteButton } from "@/components/data-table/bulk-delete-button";
 import { AccountFormDialog } from "@/components/account-form-dialog";
 import { BulkEditAccountsDialog } from "@/components/bulk-edit-accounts-dialog";
 import { DeleteButton } from "@/components/delete-button";
+import { ArchiveButton } from "@/components/archive-account-button";
 import { formatDate, formatMoney } from "@/lib/format";
 import { bulkDeleteAccounts, deleteAccount } from "@/app/(app)/cuentas/actions";
+import {
+  ACCOUNT_STATUS_LABELS,
+  ACCOUNT_TYPE_LABELS,
+  type AccountStatus,
+  type AccountType,
+} from "@/lib/enums";
 import type { accounts } from "@/db/schema";
 
 type Account = typeof accounts.$inferSelect;
@@ -24,10 +31,13 @@ type Account = typeof accounts.$inferSelect;
 export function CuentasTable({
   accounts,
   balances,
+  transactionCounts,
   initialSearch,
 }: {
   accounts: Account[];
   balances: Record<string, number>;
+  /** Live transactions per account, from the server. Decides delete vs archive. */
+  transactionCounts: Record<string, number>;
   initialSearch?: string;
 }) {
   const [search, setSearch] = React.useState(initialSearch ?? "");
@@ -40,6 +50,15 @@ export function CuentasTable({
     );
   }, [accounts, search]);
 
+  // An account with live transactions can never be hard-deleted; the foreign
+  // key on transactions.account_id is NOT NULL. The row action switches to
+  // "archive" in that case, and the server refuses the delete as a backstop.
+  // Stable identity so the columns memo doesn't rebuild on every render.
+  const hasHistory = React.useCallback(
+    (a: Account) => (transactionCounts[a.id] ?? 0) > 0,
+    [transactionCounts]
+  );
+
   const columns: ColumnDef<Account>[] = React.useMemo(
     () => [
       {
@@ -51,7 +70,7 @@ export function CuentasTable({
       {
         accessorKey: "type",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Tipo" />,
-        cell: ({ row }) => <span className="capitalize">{row.original.type.replace("_", " ")}</span>,
+        cell: ({ row }) => <span>{ACCOUNT_TYPE_LABELS[row.original.type as AccountType] ?? row.original.type}</span>,
         meta: { label: "Tipo" },
       },
       {
@@ -64,7 +83,7 @@ export function CuentasTable({
         header: ({ column }) => <DataTableColumnHeader column={column} title="Estado" />,
         cell: ({ row }) => (
           <Badge variant={row.original.status === "active" ? "secondary" : "outline"}>
-            {row.original.status}
+            {ACCOUNT_STATUS_LABELS[row.original.status as AccountStatus] ?? row.original.status}
           </Badge>
         ),
         meta: { label: "Estado" },
@@ -131,16 +150,25 @@ export function CuentasTable({
                 </Button>
               }
             />
-            <DeleteButton
-              action={deleteAccount.bind(null, row.original.id)}
-              confirmMessage={`¿Eliminar la cuenta "${row.original.name}"? Esto puede fallar si tiene transacciones asociadas.`}
-              successMessage="Cuenta eliminada"
-            />
+            {/* A hard delete cannot succeed once a transaction references the
+                account (transactions.accountId is NOT NULL with a foreign key),
+                and the old message admitted as much while still offering the
+                button. Accounts with history get "archive" instead, which keeps
+                the history and drops the account from the active set. */}
+            {hasHistory(row.original) ? (
+              <ArchiveButton accountId={row.original.id} name={row.original.name} />
+            ) : (
+              <DeleteButton
+                action={deleteAccount.bind(null, row.original.id)}
+                confirmMessage={`¿Eliminar la cuenta "${row.original.name}"?`}
+                successMessage="Cuenta eliminada"
+              />
+            )}
           </div>
         ),
       },
     ],
-    [balances]
+    [balances, hasHistory]
   );
 
   return (
@@ -150,7 +178,7 @@ export function CuentasTable({
       initialSorting={[{ id: "name", desc: false }]}
       pageSize={50}
       getRowId={(row) => row.id}
-      emptyMessage="No hay cuentas que coincidan."
+      emptyNoun="cuentas"
       storageKey="cuentas"
       bulkToolbar={(selected, clear) => {
         const ids = selected.map((a) => a.id);
@@ -167,7 +195,7 @@ export function CuentasTable({
             <BulkDeleteButton
               count={selected.length}
               action={() => bulkDeleteAccounts(ids)}
-              confirmMessage={`¿Eliminar ${selected.length} cuentas? Esto puede fallar si tienen transacciones asociadas.`}
+              confirmMessage={`¿Eliminar ${selected.length} cuentas? Las que tengan transacciones asociadas no se eliminan: archívalas en su lugar.`}
               successMessage={`${selected.length} cuentas eliminadas`}
               onDone={clear}
             />

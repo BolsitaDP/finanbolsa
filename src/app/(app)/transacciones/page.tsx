@@ -65,8 +65,8 @@ export default async function TransaccionesPage({
       : [];
   const splitsByTx = groupSplitsByTransaction(splits);
 
-  const shownFrom = totalRows[0]?.value === 0 ? 0 : (filters.page - 1) * 50 + 1;
-  const shownTo = (filters.page - 1) * 50 + rows.length;
+  const shownFrom = totalRows[0]?.value === 0 ? 0 : (filters.page - 1) * filters.pageSize + 1;
+  const shownTo = (filters.page - 1) * filters.pageSize + rows.length;
 
   return (
     <div className="flex flex-col gap-6">

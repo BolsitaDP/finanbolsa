@@ -23,6 +23,7 @@ import { CHART_COLORS } from "@/components/net-worth-chart";
 import { getAllProjectNames } from "@/app/(app)/proyectos/actions";
 import { formatDate, formatMoney } from "@/lib/format";
 import { monthKey, monthlyAmounts } from "@/lib/spending-stats";
+import { MonthSwitcher } from "@/components/month-switcher";
 import { groupSplitsByTransaction } from "@/lib/splits";
 
 const PROJECT_TYPES: Record<string, string> = { project: "Proyecto", trip: "Viaje" };
@@ -164,7 +165,8 @@ export default async function ProjectDetailPage({
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <CardTitle>{filteredProjectTx.length} transacciones</CardTitle>
-            {month && (
+            <MonthSwitcher month={month ?? monthKey(new Date())} />
+          {month && (
               <Link
                 href={`/proyectos/${project.id}`}
                 className="flex items-center gap-1 rounded-full border bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"

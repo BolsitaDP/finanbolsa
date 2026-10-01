@@ -7,24 +7,29 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { ArrowRightIcon, PencilIcon, SplitIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Combobox } from "@/components/ui/combobox";
+import { InlineCategoryCell } from "@/components/inline-category-cell";
 import { DataTable } from "@/components/data-table/data-table";
 import { DataTableColumnHeader } from "@/components/data-table/column-header";
 import { DataTableSearchInput } from "@/components/data-table/search-input";
 import { BulkActionsBar } from "@/components/data-table/bulk-actions-bar";
-import { BulkDeleteButton } from "@/components/data-table/bulk-delete-button";
+import { BulkDeleteWithUndoButton } from "@/components/delete-button";
 import { TransactionFormDialog } from "@/components/transaction-form-dialog";
 import { BulkEditTransactionsDialog } from "@/components/bulk-edit-transactions-dialog";
 import { DeleteButton } from "@/components/delete-button";
 import { formatDate, formatMoney } from "@/lib/format";
 import {
   filtersToQueryString,
-  PAGE_SIZE,
+  PAGE_SIZE_OPTIONS,
   type TransactionFilters,
   type TransactionSort,
 } from "@/lib/transactions-query";
-import { bulkSoftDeleteTransactions, softDeleteTransaction } from "@/app/(app)/transacciones/actions";
+import {
+  bulkRestoreTransactions,
+  bulkSoftDeleteTransactions,
+  restoreTransaction,
+  softDeleteTransaction,
+} from "@/app/(app)/transacciones/actions";
 import type { transactions, transactionSplits } from "@/db/schema";
 
 type Account = { id: string; name: string; currency: string };
@@ -167,19 +172,23 @@ export function TransaccionesTable({
   const [localSearch, setLocalSearch] = React.useState("");
   const [localType, setLocalType] = React.useState("all");
   const [localAccount, setLocalAccount] = React.useState("all");
+  const [localCategory, setLocalCategory] = React.useState("all");
 
   const visibleRows = React.useMemo(() => {
     if (serverMode) return rows;
     return rows.filter((r) => {
       if (localType !== "all" && r.type !== localType) return false;
       if (localAccount !== "all" && r.accountId !== localAccount) return false;
+      if (localCategory === "none" && r.categoryId) return false;
+      if (localCategory !== "all" && localCategory !== "none" && r.categoryId !== localCategory)
+        return false;
       if (localSearch) {
         const haystack = `${r.payeeOrDescriptionLabel} ${r.categoryName ?? ""} ${r.accountLabel}`.toLowerCase();
         if (!haystack.includes(localSearch.toLowerCase())) return false;
       }
       return true;
     });
-  }, [rows, serverMode, localSearch, localType, localAccount]);
+  }, [rows, serverMode, localSearch, localType, localAccount, localCategory]);
 
   const columns: ColumnDef<Row>[] = React.useMemo(
     () => [
@@ -225,16 +234,18 @@ export function TransaccionesTable({
         accessorKey: "categoryName",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Categoría" />,
         meta: { label: "Categoría" },
-        cell: ({ row }) =>
-          row.original.categoryName && row.original.categoryId ? (
-            <Link href={`/categorias/${row.original.categoryId}`}>
-              <Badge variant={row.original.categoryKind === "income" ? "secondary" : "outline"}>
-                {row.original.categoryName}
-              </Badge>
-            </Link>
-          ) : (
-            <span className="text-muted-foreground">—</span>
-          ),
+        // The category cell is its own editor: correcting a mis-categorised
+        // transaction is the most frequent action in the app, and it used to
+        // require opening the full nine-field dialog to reach this one field.
+        cell: ({ row }) => (
+          <InlineCategoryCell
+            transactionId={row.original.raw.id}
+            categoryId={row.original.categoryId}
+            categoryName={row.original.categoryName}
+            categoryKind={row.original.categoryKind}
+            categories={categories}
+          />
+        ),
       },
       {
         accessorKey: "accountLabel",
@@ -296,10 +307,14 @@ export function TransaccionesTable({
                 </Button>
               }
             />
+            {/* Undo instead of confirm: the row is soft-deleted, so the
+                toast's "Deshacer" is a real restore rather than a promise. */}
             <DeleteButton
               action={softDeleteTransaction.bind(null, row.original.raw.id)}
+              onUndo={restoreTransaction.bind(null, row.original.raw.id)}
               confirmMessage="¿Eliminar esta transacción?"
               successMessage="Transacción eliminada"
+              label="la transacción"
             />
           </div>
         ),
@@ -312,9 +327,12 @@ export function TransaccionesTable({
     <DataTable
       columns={columns}
       data={visibleRows}
-      pageSize={serverMode ? PAGE_SIZE : 20}
+      pageSize={serverMode ? filters.pageSize : 20}
       getRowId={(row) => String(row.raw.id)}
-      emptyMessage="No hay transacciones que coincidan."
+      emptyNoun="transacciones"
+      isFiltered={
+        serverMode && Boolean(filters?.q || filters?.type !== "all" || filters?.account !== "all")
+      }
       storageKey="transacciones"
       initialSorting={serverMode ? undefined : [{ id: "date", desc: true }]}
       server={
@@ -323,6 +341,8 @@ export function TransaccionesTable({
               totalRows,
               pageIndex: filters.page - 1,
               onPageIndexChange: (index) => navigate({ page: index + 1 }),
+              onPageSizeChange: (size) => navigate({ pageSize: size, page: 1 }),
+              pageSizeOptions: PAGE_SIZE_OPTIONS,
               sorting: [{ id: filters.sort, desc: filters.dir === "desc" }],
               onSortingChange: (next) => {
                 const first = next[0];
@@ -351,10 +371,10 @@ export function TransaccionesTable({
                 </Button>
               }
             />
-            <BulkDeleteButton
+            <BulkDeleteWithUndoButton
               count={selected.length}
               action={() => bulkSoftDeleteTransactions(ids)}
-              confirmMessage={`¿Eliminar ${selected.length} transacciones?`}
+              onUndo={() => bulkRestoreTransactions(ids)}
               successMessage={`${selected.length} transacciones eliminadas`}
               onDone={clear}
             />
@@ -377,6 +397,18 @@ export function TransaccionesTable({
             }
             items={{ all: "Todos los tipos", ...TYPE_LABELS }}
             className="w-[160px]"
+          />
+          <Combobox
+            value={serverMode ? filters.category : localCategory}
+            onValueChange={(v) =>
+              serverMode ? navigate({ category: v || "all" }) : setLocalCategory(v || "all")
+            }
+            items={{
+              all: "Todas las categorías",
+              none: "Sin categoría",
+              ...Object.fromEntries(categories.map((c) => [c.id, c.name])),
+            }}
+            className="w-[180px]"
           />
           <Combobox
             value={serverMode ? filters.account : localAccount}

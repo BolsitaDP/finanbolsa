@@ -5,7 +5,16 @@ import { useState } from "react";
 import { BulkEditDialog } from "@/components/data-table/bulk-edit-dialog";
 import { BulkEditSelectField } from "@/components/data-table/bulk-edit-field";
 import { bulkUpdateAccounts, type BulkAccountPatch } from "@/app/(app)/cuentas/actions";
-import { ACCOUNT_STATUSES, ACCOUNT_TYPES, CURRENCIES, type AccountStatus, type AccountType, type Currency } from "@/lib/enums";
+import {
+  ACCOUNT_STATUSES,
+  ACCOUNT_STATUS_LABELS,
+  ACCOUNT_TYPES,
+  ACCOUNT_TYPE_LABELS,
+  CURRENCIES,
+  type AccountStatus,
+  type AccountType,
+  type Currency,
+} from "@/lib/enums";
 
 export function BulkEditAccountsDialog({ ids, trigger }: { ids: string[]; trigger: React.ReactElement }) {
   const [typeEnabled, setTypeEnabled] = useState(false);
@@ -31,7 +40,7 @@ export function BulkEditAccountsDialog({ ids, trigger }: { ids: string[]; trigge
         onEnabledChange={setTypeEnabled}
         value={type}
         onValueChange={setType}
-        items={Object.fromEntries(ACCOUNT_TYPES.map((t) => [t, t.replace("_", " ")]))}
+        items={Object.fromEntries(ACCOUNT_TYPES.map((t) => [t, ACCOUNT_TYPE_LABELS[t]]))}
         placeholder="Selecciona..."
       />
       <BulkEditSelectField
@@ -49,7 +58,7 @@ export function BulkEditAccountsDialog({ ids, trigger }: { ids: string[]; trigge
         onEnabledChange={setStatusEnabled}
         value={status}
         onValueChange={setStatus}
-        items={Object.fromEntries(ACCOUNT_STATUSES.map((s) => [s, s]))}
+        items={Object.fromEntries(ACCOUNT_STATUSES.map((s) => [s, ACCOUNT_STATUS_LABELS[s]]))}
         placeholder="Selecciona..."
       />
     </BulkEditDialog>

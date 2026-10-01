@@ -255,6 +255,52 @@ describe("netWorthTrend", () => {
 
     expect(points.every((p) => p.totalsByCurrency.COP === 10)).toBe(true);
   });
+
+  it("does not invent history before an account's reference date", () => {
+    // Regression: the walk used to unwind EVERY transaction dated after a
+    // month boundary, including ones from before the account's own reference
+    // date. Those are already inside referenceBalanceMinor, so unwinding them
+    // added back money the running balance never held. On the real ledger this
+    // made acc_global66 — reference balance 0, all its movements older than the
+    // reference date — show roughly EUR 590,000 of net worth for months that
+    // never had it. The chart looked plausible, which is what made it survive.
+    //
+    // The correct answer for a month older than the reference point is the same
+    // as today: the reference balance, flat. There is no stored history to
+    // recover, and inventing some is worse than admitting it is unknown.
+    const account = makeAccount({
+      referenceDate: utc("2025-05-01"),
+      referenceBalanceMinor: 0,
+    });
+    const txs = [
+      makeTransaction({ type: "expense", amountMinor: 590_000, date: utc("2025-04-10") }),
+    ];
+
+    const points = netWorthTrend([account], txs, 6);
+
+    // Every month at or before the reference date stays flat at 0. Without the
+    // fix, the four months before May showed 590,000 of phantom wealth.
+    for (const point of points) {
+      expect(point.totalsByCurrency.COP, point.month).toBe(0);
+    }
+  });
+
+  it("still unwinds movements that came after the reference date", () => {
+    // The fix above must not disable the reconstruction it was protecting:
+    // movements newer than the reference point are still knowable, and still
+    // get added back to the months before they happened.
+    const account = makeAccount({
+      referenceDate: utc("2025-01-01"),
+      referenceBalanceMinor: 1_000_000,
+    });
+    const txs = [
+      makeTransaction({ type: "expense", amountMinor: 100_000, date: utc("2025-06-10") }),
+    ];
+
+    const points = netWorthTrend([account], txs, 3);
+
+    expect(points.map((p) => p.totalsByCurrency.COP)).toEqual([1_000_000, 1_000_000, 900_000]);
+  });
 });
 
 function monthKey(date: Date): string {

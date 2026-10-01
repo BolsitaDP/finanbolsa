@@ -32,7 +32,7 @@ import { CategorySelect } from "@/components/category-select";
 import { createTransaction, updateTransaction, type SplitInput } from "@/app/(app)/transacciones/actions";
 import { CreateRuleFromTransactionDialog } from "@/components/create-rule-from-transaction-dialog";
 import { CURRENCIES, TRANSACTION_TYPES, TRANSACTION_TYPE_LABELS } from "@/lib/enums";
-import { toDateTimeInputValue } from "@/lib/date-input";
+import { fromDateInputValue, toDateInputValue } from "@/lib/date-input";
 import { formatMoney } from "@/lib/format";
 import { projectTripItems } from "@/lib/project-options";
 
@@ -138,7 +138,7 @@ export function TransactionFormDialog({
   const [usualTransactionsLoaded, setUsualTransactionsLoaded] = useState(false);
 
   const emptyValues: FormValues = {
-    date: toDateTimeInputValue(new Date()),
+    date: toDateInputValue(new Date()),
     type: "expense",
     accountId: accounts[0]?.id ?? "",
     destinationAccountId: "none",
@@ -159,7 +159,7 @@ export function TransactionFormDialog({
       ...emptyValues,
       ...(transaction
         ? {
-            date: toDateTimeInputValue(transaction.date),
+            date: toDateInputValue(transaction.date),
             type: transaction.type as FormValues["type"],
             accountId: transaction.accountId,
             destinationAccountId: transaction.destinationAccountId ?? "none",
@@ -266,7 +266,7 @@ export function TransactionFormDialog({
   function applyUsualTransaction(usual: UsualTransaction) {
     form.reset({
       ...usual.values,
-      date: toDateTimeInputValue(new Date()),
+      date: toDateInputValue(new Date()),
     });
     setSplitRows([]);
   }
@@ -278,8 +278,17 @@ export function TransactionFormDialog({
   function onSubmit(values: FormValues) {
     startTransition(async () => {
       try {
+        // The field is "YYYY-MM-DD". fromDateInputValue parses that as LOCAL
+        // midnight — plain `new Date(values.date)` would read it as UTC and
+        // shift the day backwards for anyone west of Greenwich, which is every
+        // reader in Colombia. The row's own time is then reattached so imported
+        // timestamps survive the round-trip.
+        const localDate = fromDateInputValue(values.date);
+        const sourceTime = transaction?.date ?? new Date();
+        localDate.setHours(sourceTime.getHours(), sourceTime.getMinutes(), 0, 0);
+
         const input = {
-          date: new Date(values.date),
+          date: localDate,
           type: values.type,
           accountId: values.accountId,
           destinationAccountId:
@@ -337,7 +346,7 @@ export function TransactionFormDialog({
       onOpenChange={(nextOpen) => {
         setOpen(nextOpen);
         if (nextOpen && !transaction) {
-          form.reset({ ...emptyValues, date: toDateTimeInputValue(new Date()) });
+          form.reset({ ...emptyValues, date: toDateInputValue(new Date()) });
           setSplitRows([]);
         }
       }}
@@ -375,7 +384,15 @@ export function TransactionFormDialog({
                   <FormItem>
                     <FormLabel>Fecha</FormLabel>
                     <FormControl>
-                      <Input type="datetime-local" {...field} />
+                      {/* Date-only, not datetime-local. A native
+                          datetime-local in a half-width grid renders as six
+                          separate spinners (month, day, year, hour, minute,
+                          AM/PM) and pushed "Categoría" — the field people open
+                          this dialog to fix — down to fourth place. Nothing in
+                          the app reads the time of day: budgets, trends and the
+                          dashboard all bucket by day. The original time is
+                          preserved on save, so imported timestamps survive. */}
+                      <Input type="date" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>

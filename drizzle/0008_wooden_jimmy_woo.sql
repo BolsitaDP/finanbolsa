@@ -1,0 +1,1 @@
+ALTER TABLE `settings` ADD `convert_currency` integer DEFAULT false NOT NULL;

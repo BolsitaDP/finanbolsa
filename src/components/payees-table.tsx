@@ -102,7 +102,7 @@ export function PayeesTable({
       initialSorting={[{ id: "name", desc: false }]}
       pageSize={20}
       getRowId={(row) => row.id}
-      emptyMessage="No hay payees que coincidan."
+      emptyNoun="payees"
       storageKey="payees"
       bulkToolbar={(selected, clear) => {
         const ids = selected.map((p) => p.id);

@@ -9,6 +9,7 @@ import { accounts, categories, importBatches, payees, rules, transactions, trans
 import { parseBancolombiaStatement, parseNuStatement, parseRappicardStatement } from "@/lib/statement-parser";
 import { cleanMerchantName } from "@/lib/merchant";
 import { ruleMatches } from "@/lib/rules";
+import { nextRuleSortOrder } from "@/app/(app)/reglas/actions";
 import type { ImportGroupInput, ParsedGroup, ParsedTransaction } from "@/lib/import-types";
 import type { Currency } from "@/lib/enums";
 import type { RuleMatchType } from "@/lib/rules-types";
@@ -300,7 +301,10 @@ export async function bulkImportTransactions(
       } else {
         const [inserted] = await db
           .insert(rules)
-          .values({ name: group.merchantLabel, conditions, actions, sortOrder: 999 })
+          // Was hardcoded to 999 for every imported rule. The engine applies
+          // rules ordered by `sortOrder`, so dozens of ties at 999 made which
+          // rule win a function of SQLite's row order — and no UI showed it.
+          .values({ name: group.merchantLabel, conditions, actions, sortOrder: await nextRuleSortOrder() })
           .returning({ id: rules.id });
         ruleIdBySignature.set(signature, inserted.id);
       }

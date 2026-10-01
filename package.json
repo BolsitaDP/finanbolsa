@@ -14,7 +14,9 @@
     "db:backup": "tsx src/db/scripts/backup.ts",
     "db:verify-backup": "tsx src/db/scripts/verify-backup.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "bench:seed": "node bench-seed.mjs",
+    "bench": "node bench.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

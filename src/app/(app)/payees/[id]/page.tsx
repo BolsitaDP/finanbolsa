@@ -24,6 +24,7 @@ import { monthlyAmounts, monthKey } from "@/lib/spending-stats";
 import { monthLabel } from "@/lib/month";
 import { groupSplitsByTransaction, buildAllocations } from "@/lib/splits";
 import { formatMoney } from "@/lib/format";
+import { MonthSwitcher } from "@/components/month-switcher";
 import { getAllProjectNames } from "@/app/(app)/proyectos/actions";
 
 export default async function PayeeDetailPage({
@@ -162,7 +163,8 @@ export default async function PayeeDetailPage({
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <CardTitle>{filteredPayeeTx.length} transacciones</CardTitle>
-            {month && (
+            <MonthSwitcher month={month ?? monthKey(new Date())} />
+          {month && (
               <Link
                 href={`/payees/${id}`}
                 className="flex items-center gap-1 rounded-full border bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"

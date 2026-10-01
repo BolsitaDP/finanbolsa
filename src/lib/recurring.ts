@@ -1,6 +1,23 @@
-import type { transactions } from "@/db/schema";
+import { monthKey } from "@/lib/month";
 
-type Transaction = typeof transactions.$inferSelect;
+/**
+ * The only fields detection reads. Narrower than a full transaction row, so
+ * the query feeding it can skip the eleven columns nothing looks at — see
+ * `recurringCandidates` in aggregates.ts.
+ *
+ * `type` is kept even though the query filters on it, so that passing an
+ * unfiltered list still behaves: detection is defensive about what it is given.
+ */
+export type RecurringCandidate = {
+  id: number;
+  type: string;
+  date: Date;
+  amountMinor: number;
+  currency: string;
+  categoryId: string | null;
+  payeeId: string | null;
+  description: string | null;
+};
 
 export type RecurringGroup = {
   key: string;
@@ -33,10 +50,10 @@ const MAX_COEFFICIENT_OF_VARIATION = 0.35;
  * MIN_MONTHS distinct calendar months with a tight enough amount spread.
  */
 export function detectRecurring(
-  txs: Transaction[],
+  txs: RecurringCandidate[],
   payeeName: Map<string, string>
 ): RecurringGroup[] {
-  const groups = new Map<string, Transaction[]>();
+  const groups = new Map<string, RecurringCandidate[]>();
   for (const tx of txs) {
     if (tx.type !== "expense") continue;
     const desc = tx.description?.trim().toLowerCase();
@@ -49,7 +66,11 @@ export function detectRecurring(
 
   const result: RecurringGroup[] = [];
   for (const [key, groupTxs] of groups) {
-    const months = new Set(groupTxs.map((t) => t.date.toISOString().slice(0, 7)));
+    // LOCAL month, not the UTC one `toISOString()` would give. A Netflix charge
+    // on the 31st at 8pm local is still August, and counting it as September
+    // can make a group look like it spans more months than it does. Every other
+    // month bucketing in the app goes through monthKey() for the same reason.
+    const months = new Set(groupTxs.map((t) => monthKey(t.date)));
     if (months.size < MIN_MONTHS) continue;
 
     const amounts = groupTxs.map((t) => t.amountMinor);

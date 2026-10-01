@@ -5,7 +5,14 @@ import { useState } from "react";
 import { BulkEditDialog } from "@/components/data-table/bulk-edit-dialog";
 import { BulkEditSelectField } from "@/components/data-table/bulk-edit-field";
 import { bulkUpdateCategories, type BulkCategoryPatch } from "@/app/(app)/categorias/actions";
-import { CATEGORY_KINDS, CATEGORY_STATUSES, type CategoryKind, type CategoryStatus } from "@/lib/enums";
+import {
+  CATEGORY_KINDS,
+  CATEGORY_KIND_LABELS,
+  CATEGORY_STATUSES,
+  CATEGORY_STATUS_LABELS,
+  type CategoryKind,
+  type CategoryStatus,
+} from "@/lib/enums";
 
 type Category = { id: string; name: string };
 
@@ -55,7 +62,7 @@ export function BulkEditCategoriesDialog({
         onEnabledChange={setKindEnabled}
         value={kind}
         onValueChange={setKind}
-        items={Object.fromEntries(CATEGORY_KINDS.map((k) => [k, k]))}
+        items={Object.fromEntries(CATEGORY_KINDS.map((k) => [k, CATEGORY_KIND_LABELS[k]]))}
         placeholder="Selecciona..."
       />
       <BulkEditSelectField
@@ -64,7 +71,7 @@ export function BulkEditCategoriesDialog({
         onEnabledChange={setStatusEnabled}
         value={status}
         onValueChange={setStatus}
-        items={Object.fromEntries(CATEGORY_STATUSES.map((s) => [s, s]))}
+        items={Object.fromEntries(CATEGORY_STATUSES.map((s) => [s, CATEGORY_STATUS_LABELS[s]]))}
         placeholder="Selecciona..."
       />
     </BulkEditDialog>

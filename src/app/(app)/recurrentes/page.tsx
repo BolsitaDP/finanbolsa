@@ -1,8 +1,6 @@
 import Link from "next/link";
-import { isNull } from "drizzle-orm";
-
 import { db } from "@/db";
-import { categories, payees, transactions } from "@/db/schema";
+import { categories, payees } from "@/db/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -13,6 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { recurringCandidates } from "@/lib/aggregates";
 import { detectRecurring } from "@/lib/recurring";
 import { formatDate, formatMoney } from "@/lib/format";
 
@@ -21,8 +20,11 @@ import { formatDate, formatMoney } from "@/lib/format";
 export const dynamic = "force-dynamic";
 
 export default async function RecurrentesPage() {
-  const [allTransactions, allPayees, allCategories] = await Promise.all([
-    db.select().from(transactions).where(isNull(transactions.deletedAt)),
+  // Detection reads eight of a transaction's nineteen columns, and ignores any
+  // row that is not an expense or has neither a payee nor a description. Letting
+  // SQLite drop those rows and columns is most of this page's cost.
+  const [candidates, allPayees, allCategories] = await Promise.all([
+    recurringCandidates(),
     db.select().from(payees),
     db.select().from(categories),
   ]);
@@ -30,7 +32,7 @@ export default async function RecurrentesPage() {
   const payeeName = new Map(allPayees.map((p) => [p.id, p.name]));
   const categoryName = new Map(allCategories.map((c) => [c.id, c.name]));
 
-  const recurring = detectRecurring(allTransactions, payeeName);
+  const recurring = detectRecurring(candidates, payeeName);
 
   const monthlyByCurrency = new Map<string, number>();
   for (const r of recurring) {
