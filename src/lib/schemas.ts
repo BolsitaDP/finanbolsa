@@ -173,3 +173,21 @@ export function findOversplit(splits: { amountMinor: number }[], parentAmountMin
   if (excessMinor <= 0) return null;
   return { splitTotal, excessMinor };
 }
+
+/**
+ * The input of "register this month's recurring charge" (ROADMAP §2.2).
+ *
+ * Validated because a server action is an endpoint that accepts whatever JSON it
+ * is posted, and this one writes a transaction: an unvalidated `accountId` or a
+ * negative amount would be a corrupt row, and `accountId` is also a foreign key
+ * whose error would surface as a raw SQLite message.
+ */
+export const recurringChargeSchema = z.object({
+  date: z.date(),
+  amountMinor: z.number().int().positive(),
+  currency: z.enum(CURRENCIES),
+  accountId: z.string().min(1),
+  categoryId: optionalText,
+  payeeId: optionalText,
+  description: z.string().min(1),
+});

@@ -449,38 +449,162 @@ feature que más uso generaría y el más barato: la inferencia de categoría po
 payee **ya se puede hacer con las reglas existentes** (`rules.ts`). Effort
 **L**, pero es la pieza que convierte la app en algo que usas a diario.
 
-### 2.2 Plantillas de transacción recurrente
+### 2.2 Plantillas de transacción recurrente — HECHO (con una desviación del plan)
 
-Hoy `recurrentes` **detecta** gastos que se repiten pero no permite **crear**
-uno. Debería poder: "convertir esto en recurrente" → genera los movimientos de
-los próximos 3 meses. Con eso `/recurrentes` deja de ser un informe retroactivo
-y pasa a ser una herramienta de planificación. Effort **M**.
+Hoy `recurrentes` **detecta** gastos que se repiten pero no permite **crear** uno.
+Con eso la página deja de ser un informe retroactivo y pasa a ser una herramienta.
+Effort **M** (el ROADMAP decía S para los tres arreglos de detector; fueron S
+cada uno y el resto salió de ellos).
 
-Tres problemas del detector que hay que arreglar de paso (Effort **S** cada uno,
-todos en `recurring.ts` + la página):
+**La desviación: no genera los movimientos de los próximos 3 meses, genera el del
+mes en curso y solo bajo demanda.** El plan original pedía eso: los próximos tres meses. No es posible
+sin una decisión mucho más grande, y no por falta de esfuerzo:
 
-- **El agrupamiento no coincide con el de la importación.** `recurring.ts:43`
-  agrupa por payee o, si no hay, por **descripción cruda en minúsculas**; pero
-  el importador agrupa por `cleanMerchantName` y guarda la descripción
-  **original** (`importar/actions.ts:57, 277`). Es decir: la detección
-  **descarta justo la normalización que el import sí hizo**. Un mismo comercio
-  con tres redacciones distintas en el PDF = tres grupos, ninguno recurrente.
-- **El promedio mezcla todos los años.** `averageAmountMinor` es el promedio de
-  todo el histórico, sin ventana. Una suscripción que subió de 20k a 60k hace
-  dos años reporta un "estimado mensual" que nunca se pagó.
-- **No se puede descartar un falso positivo.** No hay forma de decir "este no
-  es una suscripción" y que deje de aparecer. Con el umbral actual, cualquier
-  comercio con ≥3 meses se cuela. Y las canceladas hace 8 meses siguen
-  listadas como activas, sin un "no aparece desde hace N meses" — que es
-  justo la señal que `categorias/[id]` ya calcula para categorías.
+`currentBalances` suma **todo** movimiento posterior a la fecha de referencia, sin
+mirar si la fecha es pasada o futura. Un movimiento fechado en noviembre, creado
+en septiembre, **restaría saldo hoy** por plata que no se movió de ninguna
+cuenta. Los sobres de noviembre empezarían gastados. Arreglarlo exige un concepto
+de "movimiento planificado" y que **todos** los agregados lo excluyan —
+`currentBalances`, `movementByAccount`, `totalsByMonth`, `spendByCategoryByMonth`,
+`movementByAccountAndMonth`, la proyección. Seis sitios en los que olvidar la
+condición es un saldo o un presupuesto equivocado, que es la clase de bug que
+esta app ya ha tenido tres veces. No se paga ese precio por una función de
+planificación.
 
-### 2.3 Desglose rápido de un retiro
+Lo que sí es útil, y es el flujo real: es el día 20, viste que el día 5 te cobró
+Netflix y no lo registraste. Un clic lo crea con la fecha, el monto, la cuenta, la
+categoría y el payee que ya se sabían — y **no** es un atajo al formulario, que
+arrancaría la tarea más frecuente de la app con nueve campos por llenar.
+
+Refinar la fecha propuesta, y por qué cada regla está aquí:
+
+- **No se ofrece antes de que toque.** Un cargo del día 5 visto el día 3 todavía
+  no pasó. Lo que no ha ocurrido ya sale en la tarjeta de gastos previstos con su
+  fecha; lo que sí pasó, y no se registró, es lo que este botón resuelve.
+- **La fecha es el día en que le corresponde, no hoy.** El banco cobró el 5.
+  Ponerle la fecha de hoy movería el gasto de mes, y con él el presupuesto.
+- **El día se ajusta al que el mes tenga.** Una suscripción que cobra el 31 en
+  septiembre es el 30, y en febrero el 28 o el 29. Ajustar es lo único razonable:
+  desplazarla a marzo la metería en otro mes.
+- **No se ofrece sin cuenta.** Es lo único que la app no puede deducir del
+  histórico, y crearlo en la cuenta equivocada es peor que no crearlo.
+- **No se ofrece dos veces.** Se comprueba por firma `mes|monto|clave de grupo`, a
+  nivel de **mes** y no de día: si el banco cobró el 3 y el usuario lo registró el
+  5, sigue siendo el mismo cargo. La acción lo vuelve a comprobar en el servidor,
+  porque entre que se dibuja el botón y el clic el cargo puede haberse capturado a
+  mano en otra pestaña.
+
+#### Los tres problemas del detector
+
+**1. El agrupamiento no coincidía con el de la importación — HECHO.** Era el más
+caro de los tres. La importación **ya** normalizaba "COMPRA EN EXITO SA" y "PAGO
+INTERBANC EXITO SA" en un solo grupo con `cleanMerchantName`, y la detección
+usaba la descripción cruda y las partía otra vez: un comercio escrito de tres
+formas por el banco eran tres grupos de uno, y ninguno parecía recurrente. Es
+decir, la detección **descartaba justo la normalización que el import sí había
+hecho**. Ahora usa la misma función.
+
+La clave de grupo se extrajo a `recurringGroupKey()` porque son la **misma**
+pregunta en tres sitios —detección, lista de lo registrado este mes, y descarte— y
+no pueden tener tres respuestas. Dos de ellas coincidían solo por casualidad: la
+detección agrupaba por descripción limpia mientras la página firmaba por
+descripción cruda, así que el botón "registrar" no encontraba los cargos recién
+capturados y ofrecía crear un duplicado.
+
+**2. El promedio mezclaba todos los años — HECHO, con un alcance menor del que
+parece.** Hay dos promedios ahora: el de toda la vida y el de los últimos seis
+cargos, y el que va bajo "Promedio mensual" es el segundo. Con ocho meses a 20.000
+y ocho a 30.000, el promedio histórico da 25.000 — una cifra que no es el precio
+de nada.
+
+**Pero no arregla las subidas grandes, y conviene decirlo.** Una suscripción que
+duplica su precio da un coeficiente de variación de ~0,57, sobre el techo de 0,35,
+así que el grupo **no se reconoce como recurrente** y no hay ningún promedio que
+corregir. Es el mismo punto ciego que §1.4 documenta para la alerta de subida,
+visto desde el otro lado: **el detector asume estabilidad y por eso no puede
+informar de que dejó de ser estable.** Cerrarlo pide una tendencia por grupo en
+vez de una prueba de estabilidad.
+
+**3. No se podía descartar un falso positivo — HECHO.** Con el umbral actual
+cualquier cosa que aparezca en tres meses con montos parecidos entra, y la lista
+solo crecía hasta que el usuario aprendía a ojearla — que es lo contrario de lo
+que sirven las dos tarjetas de arriba. Ahora hay un botón por fila y un
+"recuperar" al pie, sobre una tabla `dismissed_recurring`. La clave es la del
+grupo de detección, no un id: un grupo armado por descripción no tiene fila propia
+y anclar al identificador que usa la detección es lo que hace que el descarte
+sobreviva a que la etiqueta se vuelva a limpiar. No caduca a propósito —"no es
+una suscripción" es una afirmación sobre el comercio, no sobre un periodo—.
+
+#### Un umbral que era dos preguntas
+
+La señal de "cancelada hace meses" usaba la misma ventana de 45 días que la
+proyección, y **eso estaba mal**. Lo encontró la verificación de punta a punta:
+una suscripción que cobra el día 5 y se revisa el día 20 del mes siguiente está a
+46 días de la anterior, y está perfectamente viva — lo que pasa es que el cargo
+del 5 no se ha registrado. Con 45 días el botón se escondía **justo cuando hacía
+falta**, que es el error más tonto posible en una feature cuyo propósito es
+ayudar con la tarea del mes.
+
+Son dos preguntas distintas y por eso ahora son dos umbrales:
+
+| | Pregunta | Umbral |
+|---|---|---|
+| `isStillCharging` | ¿sigue cobrando? | `intervalo × 2` — relativo a **su** ciclo |
+| `willBillSoon` | ¿vuelve a cobrar pronto? | `intervalo` |
+
+Relativo al intervalo y no a un número fijo, porque un cargo semanal y uno mensual
+necesitan tolerancias distintas y un único número tiene que ser o demasiado corto
+para uno o demasiado largo para el otro. Sin intervalo medido se cae a 45 días.
+
+Y un efecto secundario de separar las dos: la proyección ahora **excluye los cargos
+atrasados**. Un cargo con la fecha esperada ya vencida daría un "hace 10 días"
+dentro de una tarjeta que promete los próximos 30 — y taparía justo lo que
+corresponde, que es registrarlo.
+
+### 2.3 Desglose rápido de un retiro — HECHO
 
 Un retiro de efectivo es un solo movimiento lump por 300 000. Semanas después
 el usuario recuerda que 120 000 fue un mercado y 80 000 una cena. Hoy el split
 existe pero hay que entrar al diálogo completo para agregarlo. Un
 **"Desglosar" rápido** en la fila, con los splits usados recientemente
 sugeridos. Effort **S**–**M**.
+
+Lo que hacía falta no era el desglose —ya existía— sino quitarle el camino. Para
+llegar había que abrir la fila, pasar el deslizador de scrolls, y añadir la
+primera línea de un formulario de nueve campos. Para una operación semanal, esa
+es exactamente la fricción que hace que no se haga.
+
+Tres decisiones:
+
+- **No es un atajo al formulario.** El diálogo tiene un campo por línea y nada
+  más; el resto del movimiento no se toca. Por eso la acción escribe
+  **únicamente los splits** (`setTransactionSplits`) y no reutiliza
+  `updateTransaction`: la copia de la fila que tiene la tabla puede no estar al
+  día, y escribirla entera pisaría una corrección hecha en otra pestaña. Con un
+  retiro, eso significa mover plata entre meses.
+- **Sale también en las filas que ya tienen desglose.** Lo primero fue
+  esconderlo ahí, y el resultado fue que corregir un desglose hecho seguiría
+  exigiendo el diálogo completo — o sea, la fricción de vuelta. El icono junto
+  al monto dice que está desglosado; el botón es la acción. Solo en gastos: un
+  ingreso no se reparte y una transferencia ya tiene dos cuentas.
+- **Las sugerencias son por (categoría, payee) y se ordenan por hábito, no por
+  fecha.** Un retiro de mercado y una cena usan categorías distintas aunque
+  alguna coincida, así que agrupar solo por categoría no sirve. Y se ordena por
+  **frecuencia de uso** primero: una combinación usada 20 veces hace un año es más
+  probable que sea la correcta que una usada dos veces esta semana, y casi
+  siempre se desglosa lo mismo.
+
+El servidor **vuelve a comprobar** que el desglose no exceda el movimiento
+(`findOversplit`, el mismo guard de §0.7c), y el diálogo lo comprueba también
+antes de enabling el botón: el saldo de las categorías tiene que cuadrar con el
+movimiento antes de escribir, no después de que un toast lo diga. Con splits
+válidos pero vacíos el botón se apaga, porque "Guardar" sin líneas sería una
+borrado disfrazado.
+
+Effort **M**, hecho. Verificado contra la base real: el agregado de sugerencias
+ordena por uso, el desglose válido conserva el invariante de atribución, el
+excedente se rechaza **sin tocar las líneas que ya había**, y quitar el desglose
+las borra.
 
 ### 2.4 Sugerencias de categoría mientras escribes — HECHO
 

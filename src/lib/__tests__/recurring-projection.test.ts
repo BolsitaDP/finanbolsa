@@ -88,11 +88,13 @@ describe("projectUpcoming", () => {
     expect(ACTIVE_WINDOW_DAYS).toBe(45);
   });
 
-  it("keeps a subscription that missed one charge but is otherwise current", () => {
-    // Pasó un mes sin registrar el cobro: la diferencia de 60 días es un mes sin
-    // datos, no una baja. 60 > 45 la apagaría, y ese es el margen exacto que se
-    // eligió por tolerar un cobro fallido.
-    const missed = group({
+  it("leaves an overdue charge out, because that is not a projection", () => {
+    // Último cargo hace 40 días, intervalo 30: el siguiente tocaba hace 10 días.
+    // Listarlo en una tarjeta que promete "los próximos 30 días" daría un "hace
+    // 10 días" dentro de los próximos, y además taparía lo que corresponde: que
+    // ese cargo está atrasado y hay que registrarlo. Eso es trabajo del botón de
+    // la tabla de abajo, no de una previsión.
+    const overdue = group({
       key: "payee-rappi",
       label: "Rappi",
       lastChargeDaysAgo: 40,
@@ -100,7 +102,22 @@ describe("projectUpcoming", () => {
       amountMinor: 80_000,
     });
 
-    expect(projectUpcoming([missed], TODAY)[0].totalMinor).toBe(80_000);
+    expect(projectUpcoming([overdue], TODAY)).toEqual([]);
+  });
+
+  it("still projects a charge that is late but not yet due", () => {
+    // El mismo commerce con un ciclo más largo: el siguiente cargo cae dentro de
+    // la ventana aunque la última appearances sea de hace 40 días. Por eso el
+    // criterio es la fecha esperada y no "días desde el último".
+    const slow = group({
+      key: "payee-rappi",
+      label: "Rappi",
+      lastChargeDaysAgo: 40,
+      interval: 45,
+      amountMinor: 80_000,
+    });
+
+    expect(projectUpcoming([slow], TODAY)[0].totalMinor).toBe(80_000);
   });
 
   it("projects the last charge, not the average of the whole history", () => {

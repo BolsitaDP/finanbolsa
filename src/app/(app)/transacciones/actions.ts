@@ -5,6 +5,9 @@ import { revalidatePath } from "next/cache";
 
 import { db } from "@/db";
 import { transactions, transactionSplits, payees } from "@/db/schema";
+import { transactionMonth } from "@/lib/month-sql";
+import { monthKey } from "@/lib/month";
+import type { Currency } from "@/lib/enums";
 import { buildDuplicateReport, findDuplicates } from "@/lib/duplicate-check";
 import { formatDate, formatMoney } from "@/lib/format";
 import {
@@ -12,6 +15,7 @@ import {
   duplicateCheckSchema,
   findInvalidTransfers,
   findOversplit,
+  recurringChargeSchema,
   parseOrThrow,
   splitInputSchema,
   transactionInputSchema,
@@ -261,4 +265,91 @@ export async function checkDuplicates(input: {
       ])
     )
   );
+}
+
+/**
+ * Creates a recurring charge for the current month — ROADMAP §2.2.
+ *
+ * Exposed from the transactions module rather than the recurring one on
+ * purpose: it writes a transaction, and every invariant about transactions
+ * (validation, splits, `updatedAt`, revalidation) lives here. The recurring page
+ * decides *whether* to offer it; this owns doing it.
+ *
+ * The date, amount, account and category are all taken from what the detection
+ * already knows. Nothing is invented, and nothing is left blank for the user to
+ * type.
+ */
+export async function createRecurringCharge(input: {
+  date: Date;
+  amountMinor: number;
+  currency: Currency;
+  accountId: string;
+  categoryId: string | null;
+  payeeId: string | null;
+  description: string;
+}) {
+  const parsed = parseOrThrow(recurringChargeSchema, input);
+
+  // Re-checked here, not only on the page. Between rendering the button and
+  // clicking it the user may have logged the charge by hand in another tab, and
+  // this action is the one place where a second copy would actually be written.
+  const existing = await db
+    .select({ id: transactions.id })
+    .from(transactions)
+    .where(
+      and(
+        isNull(transactions.deletedAt),
+        eq(transactionMonth, monthKey(parsed.date)),
+        eq(transactions.amountMinor, parsed.amountMinor),
+        eq(transactions.currency, parsed.currency)
+      )
+    );
+  if (existing.length > 0) {
+    return { created: false, reason: "already-recorded" as const };
+  }
+
+  await db.insert(transactions).values({
+    date: parsed.date,
+    type: "expense",
+    accountId: parsed.accountId,
+    amountMinor: parsed.amountMinor,
+    currency: parsed.currency,
+    categoryId: parsed.categoryId,
+    payeeId: parsed.payeeId,
+    description: parsed.description,
+    destinationAccountId: null,
+    destinationAmountMinor: null,
+    destinationCurrency: null,
+    projectTrip: null,
+    notes: null,
+    updatedAt: new Date(),
+  });
+  revalidateAll();
+  return { created: true as const };
+}
+
+/**
+ * Replaces a transaction's splits and nothing else.
+ *
+ * Deliberately NOT `updateTransaction`, for the same reason as
+ * `setTransactionCategory`: the table's copy of a row is not guaranteed to be
+ * current, so saving the whole row back would clobber fields the user never
+ * touched. Here the risk is sharper — the split dialog is opened from the row, and
+ * between opening it and saving, the amount may have been corrected elsewhere.
+ * Writing back a stale amount would silently move money between months.
+ *
+ * Splits never touch the balance, so this cannot change what an account holds.
+ */
+export async function setTransactionSplits(id: number, splits: SplitInput[] = []) {
+  const parsedSplits = splits.map((s) => parseOrThrow(splitInputSchema, s));
+
+  const [parent] = await db
+    .select({ amountMinor: transactions.amountMinor, currency: transactions.currency })
+    .from(transactions)
+    .where(and(eq(transactions.id, id), isNull(transactions.deletedAt)));
+  if (!parent) throw new Error("La transacción ya no existe");
+
+  assertSplitsFit(parent.amountMinor, parent.currency, parsedSplits);
+  await replaceSplits(id, parsedSplits);
+  revalidateAll();
 }

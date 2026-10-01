@@ -1,4 +1,5 @@
 import { monthKey } from "@/lib/month";
+import { cleanMerchantName } from "@/lib/merchant";
 
 /**
  * The only fields detection reads. Narrower than a full transaction row, so
@@ -17,6 +18,14 @@ export type RecurringCandidate = {
   categoryId: string | null;
   payeeId: string | null;
   description: string | null;
+  /**
+   * The account the charge came from, and the one a generated movement goes to.
+   *
+   * Not read by detection at all — it exists so `/recurrentes` can create the
+   * month's transaction without asking which account, which is the one question
+   * the app cannot guess. A subscription comes out of the same card every time.
+   */
+  accountId: string | null;
 };
 
 /**
@@ -44,6 +53,19 @@ export type RecurringGroup = {
   lastDate: Date;
   averageAmountMinor: number;
   /**
+   * Mean of the last few charges, which is the number the page should show as
+   * "what this costs".
+   *
+   * `averageAmountMinor` is the mean of the whole life, and that is a different
+   * question with a misleading answer for a subscription that changed price: one
+   * that went from 20.000 to 60.000 two years ago averages to something nobody
+   * has been charged in years, and the monthly estimate built on it is a figure
+   * that was never paid. Both are kept because both are meaningful — "what it
+   * costs" and "what it cost" — but only one of them belongs under the heading
+   * "Promedio mensual".
+   */
+  recentAverageMinor: number;
+  /**
    * The most recent charge, which is not the same as a share of the average.
    *
    * Needed by the 30-day projection: what a subscription is about to be charged
@@ -53,6 +75,8 @@ export type RecurringGroup = {
   latestAmountMinor: number;
   totalAmountMinor: number;
   transactionCount: number;
+  /** The account of the most recent charge; where a generated movement goes. */
+  accountId: string | null;
   /** The most recent price move, or null when the last charge is not up. */
   priceChange: PriceChange | null;
   /**
@@ -71,6 +95,15 @@ export type RecurringGroup = {
    * pinned as a test in recurring.test.ts.
    */
   medianIntervalDays: number | null;
+  /**
+   * The day of the month this group charges on, or null when there isn't one.
+   *
+   * Only meaningful for roughly-monthly groups, and only returned when the day
+   * actually repeats: a charge on the 28th, 29th and 1st has no "day", and
+   * guessing one would generate the transaction on a day the user then has to
+   * correct. Used to prefill the date of a generated movement.
+   */
+  dayOfMonth: number | null;
 };
 
 const MIN_MONTHS = 3;
@@ -165,15 +198,106 @@ function medianIntervalDays(chronological: RecurringCandidate[]): number | null 
 }
 
 /**
+ * Cuántos cargos entran en el promedio reciente.
+ *
+ * Seis, no "los últimos seis meses": la diferencia importa cuando hay dos cargos
+ * en un mes, y para el propósito —decir lo que cuesta hoy— lo que cuenta es
+ * cuántas observaciones recientes hay, no qué meses cubrieron.
+ */
+export const RECENT_AVERAGE_CHARGES = 6;
+
+/**
+ * El día del mes en que un grupo cobra, si ese día se repite.
+ *
+ * La moda, no el promedio: un cargo los días 3, 4 y 5 tiene un promedio de 4 que
+ * no es ningún día real, y una transacción generada el día 4 sería una fecha
+ * inventada que el usuario tiene que corregir — el trabajo que esta feature
+ * existe para quitar. Se exige que el día aparezca al menos dos veces, que es la
+ * evidencia mínima: dos cargos el 15 sí hablan del día 15, y dos cargos el 3 y el
+ * 17 no hablan de nada.
+ */
+export function detectDayOfMonth(dates: Date[]): number | null {
+  const counts = new Map<number, number>();
+  for (const date of dates) {
+    const day = date.getDate();
+    counts.set(day, (counts.get(day) ?? 0) + 1);
+  }
+  let bestDay: number | null = null;
+  let bestCount = 0;
+  for (const [day, count] of counts) {
+    if (count > bestCount) {
+      bestDay = day;
+      bestCount = count;
+    }
+  }
+  return bestCount >= 2 ? bestDay : null;
+}
+
+/**
+ * Whether an interval is close enough to "once a month" to have a day of the
+ * month at all.
+ *
+ * 28 to 31 days. A charge on the 28th, 29th, 30th and 31st of successive months
+ * is the same subscription paying on "the end of the month", and the gap between
+ * those charges is 28 days in one month and 31 in the next. Anything shorter
+ * than four weeks is a different kind of charge and has no day.
+ */
+export function isMonthlyInterval(days: number | null): boolean {
+  return days !== null && days >= 28 && days <= 31;
+}
+
+/** Un día del mes que existe en cualquier mes, sin efectos de año bisiesto. */
+export function safeDayOfMonth(year: number, monthIndex: number, day: number) {
+  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+  return Math.min(day, daysInMonth);
+}
+
+function mean(values: number[]) {
+  return values.reduce((s, v) => s + v, 0) / values.length;
+}
+
+/**
  * Detects recurring expenses (subscriptions, memberships, rent...) from the
  * existing transaction history — no new schema, purely a read-time pattern
  * over transactions already imported or entered by hand.
  *
- * Grouped by payee when set, otherwise by the raw description (lowercased) —
- * a transaction with neither is skipped, since there's nothing to group it
- * on. A group counts as recurring when it's shown up in at least
- * MIN_MONTHS distinct calendar months with a tight enough amount spread.
+ * Grouped by payee when set, otherwise by the merchant label the **importer**
+ * produced — `cleanMerchantName(description)`, the same function
+ * `importar/actions.ts` groups by. Using the raw description instead was the
+ * single worst bug in this file: the import already normalised "COMPRA EN EXITO
+ * SA" and "PAGO INTERBANC EXITO" into one group, and detection then threw that
+ * away and split them back into three. A merchant written three ways by the bank
+ * was three groups of one, and none of them looked recurring.
+ *
+ * A transaction with neither a payee nor a description is skipped, since there's
+ * nothing to group it on. A group counts as recurring when it's shown up in at
+ * least MIN_MONTHS distinct calendar months with a tight enough amount spread.
  */
+/**
+ * El grupo al que pertenece un movimiento, según la identidad que usa la
+ * detección.
+ *
+ * Exportado y usado en tres sitios —la detección, la lista de lo ya registrado
+ * este mes y el descarte— porque son la **misma** pregunta y no pueden tener
+ * tres respuestas. Dos de ellos sí coincidían por casualidad: la detección
+ * agrupaba por descripción limpia mientras la página firmaba por descripción
+ * cruda, así que el botón "registrar el de este mes" no encontraba los cargos que
+ * el usuario acababa de capturar y ofrecía crear un duplicado. Un prefijo por
+ * tipo (`payee:` / `desc:`) porque un payee puede llamarse igual que un comercio
+ * sin payee, y son grupos distintos.
+ */
+/** El payee de una clave de grupo, o null si el grupo se armó por descripción. */
+export function payeeIdFromGroupKey(key: string): string | null {
+  return key.startsWith("payee:") ? key.slice(6) : null;
+}
+
+export function recurringGroupKey(tx: Pick<RecurringCandidate, "payeeId" | "description">) {
+  if (tx.payeeId) return `payee:${tx.payeeId}`;
+  const description = tx.description?.trim() ?? "";
+  if (!description) return null;
+  return `desc:${cleanMerchantName(description).toLowerCase()}`;
+}
+
 export function detectRecurring(
   txs: RecurringCandidate[],
   payeeName: Map<string, string>
@@ -181,8 +305,7 @@ export function detectRecurring(
   const groups = new Map<string, RecurringCandidate[]>();
   for (const tx of txs) {
     if (tx.type !== "expense") continue;
-    const desc = tx.description?.trim().toLowerCase();
-    const key = tx.payeeId ? `payee:${tx.payeeId}` : desc ? `desc:${desc}` : null;
+    const key = recurringGroupKey(tx);
     if (!key) continue;
     const list = groups.get(key) ?? [];
     list.push(tx);
@@ -199,13 +322,19 @@ export function detectRecurring(
     if (months.size < MIN_MONTHS) continue;
 
     const amounts = groupTxs.map((t) => t.amountMinor);
-    const mean = amounts.reduce((s, a) => s + a, 0) / amounts.length;
-    const variance = amounts.reduce((s, a) => s + (a - mean) ** 2, 0) / amounts.length;
-    const coefficientOfVariation = mean === 0 ? 0 : Math.sqrt(variance) / mean;
+    // Named `lifetimeMean` rather than `mean` because there are now two means in
+    // play, and the difference between them is the whole point of the recent
+    // one. A bare `mean` next to `recentAverageMinor` invites reading them as the
+    // same number twice.
+    const lifetimeMean = mean(amounts);
+    const variance = amounts.reduce((s, a) => s + (a - lifetimeMean) ** 2, 0) / amounts.length;
+    const coefficientOfVariation =
+      lifetimeMean === 0 ? 0 : Math.sqrt(variance) / lifetimeMean;
     if (coefficientOfVariation > MAX_COEFFICIENT_OF_VARIATION) continue;
 
     const sorted = [...groupTxs].sort((a, b) => b.date.getTime() - a.date.getTime());
     const latest = sorted[0];
+    const chronological = [...sorted].reverse();
 
     const categoryCounts = new Map<string, number>();
     for (const t of groupTxs) {
@@ -230,7 +359,11 @@ export function detectRecurring(
       categoryId,
       monthsSeen: months.size,
       lastDate: latest.date,
-      averageAmountMinor: mean,
+      accountId: latest.accountId,
+      averageAmountMinor: lifetimeMean,
+      recentAverageMinor: mean(
+        chronological.slice(-RECENT_AVERAGE_CHARGES).map((t) => t.amountMinor)
+      ),
       latestAmountMinor: latest.amountMinor,
       totalAmountMinor: amounts.reduce((s, a) => s + a, 0),
       transactionCount: groupTxs.length,
@@ -240,9 +373,15 @@ export function detectRecurring(
         latest.amountMinor,
         sorted.slice(1).map((t) => t.amountMinor)
       ),
-      medianIntervalDays: medianIntervalDays([...sorted].reverse()),
+      medianIntervalDays: medianIntervalDays(chronological),
+      // Only a roughly-monthly group has a "day of the month". A charge every 20
+      // days lands on whatever day it lands, and asserting one would put the
+      // generated transaction on an invented date.
+      dayOfMonth: isMonthlyInterval(medianIntervalDays(chronological))
+        ? detectDayOfMonth(chronological.map((t) => t.date))
+        : null,
     });
   }
 
-  return result.sort((a, b) => b.averageAmountMinor - a.averageAmountMinor);
+  return result.sort((a, b) => b.recentAverageMinor - a.recentAverageMinor);
 }

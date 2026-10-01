@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { detectPriceIncrease, detectRecurring } from "@/lib/recurring";
+import {
+  detectDayOfMonth,
+  detectPriceIncrease,
+  detectRecurring,
+  isMonthlyInterval,
+  safeDayOfMonth,
+} from "@/lib/recurring";
 import { makeTransaction, utc } from "./factories";
 
 /**
@@ -458,5 +464,296 @@ describe("detectRecurring median interval", () => {
     );
 
     expect(detectRecurring(txs, payees)).toHaveLength(0);
+  });
+});
+
+/**
+ * ROADMAP §2.2 — the three ways the detector was throwing away information it
+ * already had. All three produced a report that was confidently wrong: charges
+ * that should have grouped didn't, an "average" nobody was ever charged, and
+ * subscriptions that had been cancelled for months still listed as current.
+ */
+describe("detectRecurring grouping", () => {
+  it("groups the same merchant written three ways by the bank", () => {
+    // El bug más caro del archivo. La importación YA normalizaba estas tres
+    // redacciones en un solo grupo con `cleanMerchantName`, y la detección
+    //usaba la descripción cruda, así que las partía otra vez: un comercio
+    // escrito de tres formas eran tres grupos de uno, y ninguno parecía
+    // recurrente. Es decir: la detección descartaba justo la normalización que
+    // el import sí había hecho.
+    const txs = ["COMPRA EN EXITO SA", "PAGO INTERBANC EXITO SA", "COMPRA EN EXITO  SA"].map(
+      (description, i) =>
+        makeTransaction({
+          date: utc(`2025-0${i + 1}-10`),
+          type: "expense",
+          amountMinor: 180_000,
+          payeeId: null,
+          description,
+        })
+    );
+
+    const groups = detectRecurring(txs, new Map());
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0].key).toBe("desc:exito sa");
+    expect(groups[0].transactionCount).toBe(3);
+  });
+
+  it("still keeps genuinely different merchants apart", () => {
+    // El riesgo de normalizar de más: dos comercios que empiezan igual no son el
+    // mismo comercio, y fundirlos daría un grupo con una dispersión enorme que
+    // el detector descartaría — dejando los dos fuera.
+    const txs = ["COMPRA EN EXITO SA", "COMPRA EN EXITO CALI"].flatMap((description, i) =>
+      [1, 2, 3].map((m) =>
+        makeTransaction({
+          date: utc(`2025-0${m}-10`),
+          type: "expense",
+          amountMinor: i === 0 ? 180_000 : 240_000,
+          payeeId: null,
+          description,
+        })
+      )
+    );
+
+    const groups = detectRecurring(txs, new Map());
+
+    expect(groups).toHaveLength(2);
+    expect(groups.map((g) => g.key).sort()).toEqual(["desc:exito cali", "desc:exito sa"]);
+  });
+
+  it("splits exactly where cleanMerchantName does, and no further", () => {
+    // La limitación es de `merchant.ts`, no de la detección, y es compartida con
+    // el importador: "COMPRA EXITO SA 4567" conserva el prefijo "COMPRA" a secas
+    // y el código final, así que es otro grupo. Antes de este arreglo la
+    // detección ni siquiera intentaba coincidir con el importador y partía
+    // también las tres redacciones que SÍ se normalizan. Fijado para que quede
+    // constancia de que el límite es `merchant.ts` y no esta función: si algún
+    // día se amplía `cleanMerchantName`, esto cambia a la vez en las dos partes.
+    const txs = ["COMPRA EN EXITO SA", "COMPRA EXITO SA 4567"].flatMap((description) =>
+      [1, 2, 3].map((m) =>
+        makeTransaction({
+          date: utc(`2025-0${m}-10`),
+          type: "expense",
+          amountMinor: 180_000,
+          payeeId: null,
+          description,
+        })
+      )
+    );
+
+    const groups = detectRecurring(txs, new Map());
+
+    expect(groups).toHaveLength(2);
+    expect(groups.map((g) => g.key).sort()).toEqual([
+      "desc:compra exito sa 4567",
+      "desc:exito sa",
+    ]);
+  });
+
+  it("prefers the payee over the description, so the label stays clean", () => {
+    const txs = ["COMPRA EN NETFLIX.COM", "NETFLIX", "PAGO NETFLIX 8842"].map(
+      (description, i) =>
+        makeTransaction({
+          date: utc(`2025-0${i + 1}-10`),
+          type: "expense",
+          amountMinor: 42_000,
+          payeeId: "payee-netflix",
+          description,
+        })
+    );
+
+    expect(detectRecurring(txs, payees)[0].key).toBe("payee:payee-netflix");
+  });
+});
+
+describe("detectRecurring recent average", () => {
+  it("reports what it costs now, not what it cost across its whole life", () => {
+    // El problema 2 de §2.2. Esta suscripción valía 20.000 durante ocho meses y
+    // hoy vale 30.000. El promedio de toda la vida da 25.000 — una cifra que no
+    // es el precio de nada — y el "recurrente mensual estimado" construido sobre
+    // ella subestima lo que va a salir este mes por un 17 %.
+    const txs = [
+      ...["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08"].map(
+        (month) =>
+          makeTransaction({
+            date: utc(`${month}-10`),
+            type: "expense",
+            amountMinor: 20_000,
+            payeeId: "payee-gimnasio",
+            description: "GIMNASIO",
+          })
+      ),
+      ...["2026-09", "2026-10", "2026-11", "2026-12", "2027-01", "2027-02", "2027-03", "2027-04"].map(
+        (month) =>
+          makeTransaction({
+            date: utc(`${month}-10`),
+            type: "expense",
+            amountMinor: 30_000,
+            payeeId: "payee-gimnasio",
+            description: "GIMNASIO",
+          })
+      ),
+    ];
+
+    const group = detectRecurring(txs, new Map([["payee-gimnasio", "Gimnasio"]]))[0];
+
+    expect(group.latestAmountMinor).toBe(30_000);
+    expect(group.recentAverageMinor).toBe(30_000);
+    // El promedio histórico se conserva, pero con su propio nombre: es otra
+    // pregunta ("qué costó"), no la que va bajo el título "Promedio mensual".
+    expect(group.averageAmountMinor).toBe(25_000);
+  });
+
+  it("smooths across the price change instead of reporting only the latest charge", () => {
+    // `recentAverageMinor` y `latestAmountMinor` no son lo mismo, y no deben
+    // serlo: el promedio reciente es una ventana de seis cargos y el último es
+    // un dato puntual. Con siete cargos —cuatro al precio viejo, tres al nuevo—
+    // la ventana deja fuera solo el más antiguo y arrastra tres viejos, así que
+    // los tres números quedan claramente distintos: 24.000 lo último, 22.000 la
+    // ventana de seis, 21.714 toda la vida. Quien necesita "cuánto me van a
+    // cobrar" usa el último, quien necesita "cuánto me cuesta" usa la ventana, y
+    // el promedio de toda la vida no sirve bien para ninguna de las dos.
+    const old = ["2026-06", "2026-07", "2026-08", "2026-09"];
+    const fresh = ["2026-10", "2026-11", "2026-12"];
+    const txs = [
+      ...old.map((month) =>
+        makeTransaction({
+          date: utc(`${month}-10`),
+          type: "expense",
+          amountMinor: 20_000,
+          payeeId: "payee-gimnasio",
+          description: "GIMNASIO",
+        })
+      ),
+      ...fresh.map((month) =>
+        makeTransaction({
+          date: utc(`${month}-10`),
+          type: "expense",
+          amountMinor: 24_000,
+          payeeId: "payee-gimnasio",
+          description: "GIMNASIO",
+        })
+      ),
+    ];
+
+    const group = detectRecurring(txs, new Map())[0];
+
+    expect(group.latestAmountMinor).toBe(24_000);
+    // Ventana de 6 sobre 7 cargos: tres viejos y tres nuevos.
+    expect(group.recentAverageMinor).toBe(22_000);
+    expect(group.averageAmountMinor).toBeCloseTo(21_714, 0);
+  });
+
+  it("only looks at the last six charges, not all of them", () => {
+    const amounts = [20_000, 20_000, 20_000, 20_000, 50_000, 60_000, 55_000, 60_000];
+    const months = ["2024-01", "2024-02", "2024-03", "2024-04", "2026-05", "2026-06", "2026-07", "2026-08"];
+    const txs = amounts.map((amountMinor, i) =>
+      makeTransaction({
+        date: utc(`${months[i]}-10`),
+        type: "expense",
+        amountMinor,
+        payeeId: "payee-servicio",
+        description: "SERVICIO",
+      })
+    );
+
+    // Esta serie tiene demasiada dispersión y el grupo no se reconoce como
+    // recurrente: el coeficiente de variación da ~0,48, sobre el techo de 0,35.
+    // Fijado porque es la razón por la que los promediosTrimmed no se pueden
+    // probar "con cualquier dato": la puerta de entrada filtra antes.
+    expect(detectRecurring(txs, new Map())).toEqual([]);
+  });
+
+  it("is the same as the lifetime mean when there are fewer than six charges", () => {
+    const group = detectRecurring(monthlyExpenses(4, 50_000), payees)[0];
+
+    expect(group.recentAverageMinor).toBe(group.averageAmountMinor);
+  });
+});
+
+describe("detectDayOfMonth", () => {
+  it("finds the day a monthly charge repeats on", () => {
+    const group = detectRecurring(
+      ["2026-01-15", "2026-02-15", "2026-03-15", "2026-04-15"].map((date) =>
+        makeTransaction({
+          date: utc(date),
+          type: "expense",
+          amountMinor: 42_000,
+          payeeId: "payee-netflix",
+          description: "NETFLIX",
+        })
+      ),
+      payees
+    )[0];
+
+    expect(group.dayOfMonth).toBe(15);
+    // 31, no 30: del 15 de enero al 15 de febrero hay 31 días. Por eso el rango
+    // de `isMonthlyInterval` es 28–31 y no "30 más o menos".
+    expect(group.medianIntervalDays).toBe(31);
+  });
+
+  it("returns null when the day drifts, instead of inventing one", () => {
+    // Un cargo los días 3, 17 y 28 no tiene "día": el promedio sería 16, que no
+    // es ningún día, y una transacción generada el 16 sería una fecha inventada
+    // que el usuario tiene que corregir. El trabajo que la feature quita.
+    expect(detectDayOfMonth([new Date(2026, 0, 3), new Date(2026, 1, 17), new Date(2026, 2, 28)])).toBeNull();
+  });
+
+  it("accepts two charges that agree, because agreement is the evidence", () => {
+    // El riesgo aquí no es el tamaño de la muestra sino la deriva: dos cargos el
+    // 15 son evidencia suficiente del día 15, y el detector nunca entrega un
+    // grupo con menos de tres cargos (MIN_MONTHS), así que en la práctica esta
+    // rama solo se alcanza desde fuera.
+    expect(detectDayOfMonth([new Date(2026, 0, 15), new Date(2026, 1, 15)])).toBe(15);
+  });
+
+  it("is null for a group that is not monthly, which has no day of the month", () => {
+    const start = Date.UTC(2026, 0, 3, 12);
+    const txs = Array.from({ length: 8 }, (_, i) =>
+      makeTransaction({
+        date: new Date(start + i * 20 * 86_400_000),
+        type: "expense",
+        amountMinor: 45_000,
+        payeeId: "payee-domicilios",
+        description: "DOMICILIOS",
+      })
+    );
+
+    const group = detectRecurring(txs, new Map())[0];
+
+    expect(group.dayOfMonth).toBeNull();
+  });
+});
+
+describe("isMonthlyInterval", () => {
+  it("accepts the 28-to-31 day range a month-end charge produces", () => {
+    // Un cargo los días 28, 29, 30 y 31 de meses sucesivos tiene 28 días de
+    // diferencia en un mes y 31 en el siguiente. Es la misma suscripción
+    // pagando "a fin de mes", y el filtro tiene que tolerarlo.
+    for (const days of [28, 29, 30, 31]) expect(isMonthlyInterval(days), String(days)).toBe(true);
+  });
+
+  it("rejects anything faster than four weeks", () => {
+    for (const days of [7, 14, 20, 27]) expect(isMonthlyInterval(days), String(days)).toBe(false);
+  });
+
+  it("rejects a quarterly charge, which has no day of the month", () => {
+    expect(isMonthlyInterval(90)).toBe(false);
+    expect(isMonthlyInterval(null)).toBe(false);
+  });
+});
+
+describe("safeDayOfMonth", () => {
+  it("keeps a valid day untouched", () => {
+    expect(safeDayOfMonth(2026, 8, 15)).toBe(15);
+  });
+
+  it("clamps to the last day of a shorter month", () => {
+    // Un cargo que cae el 31 no puede caer en febrero. Ajustarlo al 28 es lo
+    // único razonable; inventar el 3 de marzo sería crear un movimiento en otro
+    // mes y contaminar el presupuesto de ese mes.
+    expect(safeDayOfMonth(2026, 1, 31)).toBe(28);
+    expect(safeDayOfMonth(2024, 1, 31)).toBe(29);
+    expect(safeDayOfMonth(2026, 3, 31)).toBe(30);
   });
 });

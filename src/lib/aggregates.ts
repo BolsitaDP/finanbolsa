@@ -356,6 +356,7 @@ export async function recurringCandidates(): Promise<RecurringCandidate[]> {
       categoryId: transactions.categoryId,
       payeeId: transactions.payeeId,
       description: transactions.description,
+      accountId: transactions.accountId,
     })
     .from(transactions)
     .where(
@@ -417,4 +418,55 @@ export async function loadIntegrityInput(): Promise<IntegrityInput> {
   ]);
 
   return { accounts: accountRows, movements: movementRows, splits: splitRows };
+}
+
+export type RecentSplit = {
+  categoryId: string | null;
+  payeeId: string | null;
+  /** veces usada, para ordenar por hábito y no por alfabetía */
+  uses: number;
+  /** 'YYYY-MM-DD' del uso más reciente. */
+  lastUsed: string;
+};
+
+/**
+ * Los desgloses que más se repiten, para sugerirlos.
+ *
+ * ROADMAP §2.3: un retiro de 300.000 se desglosa con las mismas cuatro
+ * categorías casi siempre, y escribirlas a mano cada vez es el trabajo que la
+ * feature quita. Se agrupa por (categoría, payee) —no solo por categoría— porque
+ * un desglose de un retiro de mercado y uno de una cena usan categorías
+ * distintas aunque alguna coincida.
+ *
+ * Se ordenan por **uso reciente y frecuencia**, no por fecha del último uso: una
+ * combinación usada 20 veces hace un año es más probable que sea la correcta que
+ * una usada dos veces esta semana, y el usuario casi siempre desglosa lo mismo.
+ *
+ * Solo sobre splits de padre no eliminado: un desglose de un movimiento borrado no
+ * es una sugerencia, es un fantasma.
+ */
+export async function recentSplits(limit: number): Promise<RecentSplit[]> {
+  const rows = await db.all<{
+    category_id: string | null;
+    payee_id: string | null;
+    uses: number;
+    last_used: string;
+  }>(sql`
+    select s.category_id as category_id,
+           s.payee_id as payee_id,
+           count(*) as uses,
+           max(t.date) as last_used
+    from transaction_splits s
+    join transactions t on t.id = s.transaction_id
+    where t.deleted_at is null
+    group by s.category_id, s.payee_id
+    order by uses desc, last_used desc
+    limit ${limit}
+  `);
+  return rows.map((row) => ({
+    categoryId: row.category_id,
+    payeeId: row.payee_id,
+    uses: Number(row.uses),
+    lastUsed: row.last_used,
+  }));
 }

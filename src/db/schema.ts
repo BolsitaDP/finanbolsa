@@ -63,8 +63,29 @@ export const importBatches = sqliteTable("import_batches", {
     .default(sql`(unixepoch())`),
 });
 
+/**
+ * Recurring charges the user has said are not subscriptions.
+ *
+ * ROADMAP §2.2: with the current threshold, anything that shows up in three
+ * months with similar amounts gets flagged — a weekly shop that happens to fall
+ * in three different months, a gym you went to for a while. There was no way to
+ * say "this isn't one", so the list only ever grew and the user learned to skim
+ * it, which defeats the point of the alerts above it.
+ *
+ * The key is the detection group key (`payee:<id>` or `desc:<merchant>`), not an
+ * id: a description group has no row of its own, and keying on the detection's
+ * own identity is what makes the dismissal survive the label being re-cleaned.
+ * Deliberately never expires — "no es una suscripción" is a statement about the
+ * merchant, not about a period. It can be undone from the same page.
+ */
+export const dismissedRecurring = sqliteTable("dismissed_recurring", {
+  key: text("key").primaryKey(),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
 // --- transactions -----------------------------------------------------------
-// type: expense | income | transfer
 //
 // Indexes below were chosen by benchmarking every query the app actually runs
 // against this table at 50k rows, not by guessing. The winners are `date`

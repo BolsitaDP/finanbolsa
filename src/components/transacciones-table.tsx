@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ArrowRightIcon, PencilIcon, SplitIcon } from "lucide-react";
+import { ArrowRightIcon, PencilIcon, ScissorsIcon, SplitIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
@@ -15,6 +15,7 @@ import { DataTableSearchInput } from "@/components/data-table/search-input";
 import { BulkActionsBar } from "@/components/data-table/bulk-actions-bar";
 import { BulkDeleteWithUndoButton } from "@/components/delete-button";
 import { TransactionFormDialog } from "@/components/transaction-form-dialog";
+import { SplitDialog } from "@/components/split-dialog";
 import { BulkEditTransactionsDialog } from "@/components/bulk-edit-transactions-dialog";
 import { DeleteButton } from "@/components/delete-button";
 import { formatDate, formatMoney } from "@/lib/format";
@@ -31,6 +32,7 @@ import {
   softDeleteTransaction,
 } from "@/app/(app)/transacciones/actions";
 import type { transactions, transactionSplits } from "@/db/schema";
+import type { RecentSplit } from "@/lib/aggregates";
 
 type Account = { id: string; name: string; currency: string };
 type Category = { id: string; name: string; kind: string; parentCategoryId: string | null };
@@ -72,6 +74,7 @@ export function TransaccionesTable({
   filters,
   totalRows,
   splitsByTx,
+  splitSuggestions,
 }: {
   transactions: Transaction[];
   accounts: Account[];
@@ -88,6 +91,8 @@ export function TransaccionesTable({
   filters?: TransactionFilters;
   totalRows?: number;
   splitsByTx?: Map<number, TransactionSplit[]>;
+  /** Los desgloses más repetidos, para sugerirlos sin tener que elegirlos. */
+  splitSuggestions?: RecentSplit[];
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -293,6 +298,27 @@ export function TransaccionesTable({
         enableHiding: false,
         cell: ({ row }) => (
           <div className="flex justify-end gap-1">
+            {/* Solo en gastos: un ingreso no se reparte entre categorías, y una
+                transferencia ya tiene dos cuentas. Sale también en las filas que
+                YA tienen desglose, porque si no el único camino para corregirlo
+                vuelve a ser el diálogo completo — que es exactamente la fricción
+                que esta feature quita. El icono junto al monto dice que está
+                desglosado; esto es la acción. */}
+            {row.original.raw.type === "expense" && (
+                <SplitDialog
+                  transaction={row.original.raw}
+                  existingSplits={splitsByTx?.get(row.original.raw.id) ?? []}
+                  categories={categories}
+                  payeeNames={new Map(payees.map((p) => [p.id, p.name]))}
+                  suggestions={splitSuggestions ?? []}
+                  trigger={
+                    <Button variant="ghost" size="icon-sm" title="Desglosar en categorías">
+                      <ScissorsIcon />
+                      <span className="sr-only">Desglosar</span>
+                    </Button>
+                  }
+                />
+              )}
             <TransactionFormDialog
               accounts={accounts}
               categories={categories}
@@ -320,7 +346,7 @@ export function TransaccionesTable({
         ),
       },
     ],
-    [accounts, categories, payees, projectNames, accountName, splitsByTx]
+    [accounts, categories, payees, projectNames, accountName, splitsByTx, splitSuggestions]
   );
 
   return (

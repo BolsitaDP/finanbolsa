@@ -10,6 +10,7 @@ import { TransaccionesTable } from "@/components/transacciones-table";
 import { groupSplitsByTransaction } from "@/lib/splits";
 import { getAllProjectNames } from "@/app/(app)/proyectos/actions";
 import { buildTransactionQuery, parseTransactionFilters } from "@/lib/transactions-query";
+import { recentSplits } from "@/lib/aggregates";
 
 export default async function TransaccionesPage({
   searchParams,
@@ -21,7 +22,15 @@ export default async function TransaccionesPage({
 
   // One windowed page instead of the whole table. This is the change that took
   // the page from ~670 KB of transactions over the wire to a few KB.
-  const [page, totalRows, allAccounts, allCategories, allPayees, projectNames] = await Promise.all([
+  const [
+    page,
+    totalRows,
+    allAccounts,
+    allCategories,
+    allPayees,
+    projectNames,
+    splitSuggestions,
+  ] = await Promise.all([
     db
       .select()
       .from(transactions)
@@ -45,6 +54,9 @@ export default async function TransaccionesPage({
     db.select().from(categories).orderBy(categories.name),
     db.select().from(payees).orderBy(payees.name),
     getAllProjectNames(),
+    // Los desgloses más repetidos, para que añadir una categoría sea un clic.
+    // Ocho es suficiente para cubrir los de siempre sin llenar la barra.
+    recentSplits(8),
   ]);
 
   const rows = page.map((r) => r.transactions);
@@ -102,6 +114,7 @@ export default async function TransaccionesPage({
             filters={filters}
             totalRows={totalRows[0]?.value ?? 0}
             splitsByTx={splitsByTx}
+            splitSuggestions={splitSuggestions}
           />
         </CardContent>
       </Card>

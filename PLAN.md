@@ -16,7 +16,7 @@
 |---|------|--------|
 | 1 | Autenticación | **Hecho** — `src/proxy.ts`, login, guard en actions |
 | 2 | Backups automáticos | **Hecho** — `VACUUM INTO` + servicio `backup` + simulacro de restauración probado |
-| 3 | Tests de la lógica de cálculo | **Hecho** — 319 tests en verde (1 depende del ledger real) |
+| 3 | Tests de la lógica de cálculo | **Hecho** — 360 tests en verde (1 depende del ledger real) |
 | 4 | Índices en `transactions` | **Hecho** — 3 índices, medidos a 50k filas |
 | 5 | Paginación y filtrado en SQL | **Hecho** — `/transacciones` con URL como estado; el resto son agregados |
 | 6 | Agregación en SQL | **Hecho** — `src/lib/aggregates.ts`, 3,5× en `/` a 50k filas |
@@ -218,9 +218,11 @@ es restaurar un backup — que es exactamente por qué §2.1 va primero.
   lo que sigue pendiente.*
 - ~~**Conversión de moneda**~~ — **Hecho**, opt-in y con TRM automática
   (`ROADMAP.md` §3.2).
-- ~~**Recurrentes proyectados**~~ — **Parcial**: la detección ya avisaba de
-  subidas de precio (§1.4) y proyecta los próximos 30 días (§1.5). Falta
-  *generar* el movimiento del mes, que es §2.2.
+- ~~**Recurrentes proyectados**~~ — **Hecho**: avisa de subidas (§1.4), proyecta
+  los próximos 30 días (§1.5), registra el cargo del mes que faltaba (§2.2) y
+  deja descartar los falsos positivos. No genera movimientos **futuros** a
+  propósito: restingirían saldo de un día que no ha ocurrido, y taparían los
+  presupuestos de meses por venir.
 - **Plantilla de presupuesto** — "copiar mes anterior", rollover visible
   (el cálculo ya existe, no es visible ni configurable), presets.
 - **Importador CSV/XLSX genérico** como fallback: hoy el parser solo entiende
