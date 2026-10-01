@@ -5,8 +5,13 @@ import { revalidatePath } from "next/cache";
 
 import { db } from "@/db";
 import { categories, payees, rules, transactions } from "@/db/schema";
-import { applyActions, ruleMatches } from "@/lib/rules";
-import type { RuleAction, RuleCondition, RuleMatchType } from "@/lib/rules-types";
+import { applyActions, resolveRuleFields, ruleMatches } from "@/lib/rules";
+import type {
+  RuleAction,
+  RuleCondition,
+  RuleMatchType,
+} from "@/lib/rules-types";
+import type { ApplicableRule, LiveTargets } from "@/lib/rules";
 
 type RuleInput = {
   name: string | null;
@@ -171,22 +176,20 @@ export async function applyRulesToTransactions() {
   // reference it — an action pointing at a since-deleted id would otherwise
   // hit a raw FK error on the transactions.set() below and abort the entire
   // run partway through, silently skipping every rule after it.
-  const validCategoryIds = new Set(validCategories.map((c) => c.id));
-  const validPayeeIds = new Set(validPayees.map((p) => p.id));
+  const live: LiveTargets = {
+    categoryIds: new Set(validCategories.map((c) => c.id)),
+    payeeIds: new Set(validPayees.map((p) => p.id)),
+  };
+  // Only the fields the engine can set, and only the rules it can evaluate.
+  const applicable: ApplicableRule[] = allRules.map((rule) => ({
+    conditions: rule.conditions as RuleCondition[],
+    actions: rule.actions as RuleAction[],
+    matchType: rule.matchType as RuleMatchType,
+  }));
 
   let updated = 0;
   for (const tx of allTransactions) {
-    const patch: { categoryId?: string | null; payeeId?: string | null } = {};
-    for (const rule of allRules) {
-      if (ruleMatches(tx, rule.conditions, rule.matchType as RuleMatchType)) {
-        const liveActions = rule.actions.filter(
-          (a) =>
-            (a.field === "categoryId" && validCategoryIds.has(a.value)) ||
-            (a.field === "payeeId" && validPayeeIds.has(a.value))
-        );
-        applyActions(patch, liveActions);
-      }
-    }
+    const patch = resolveRuleFields(tx, applicable, live);
     const changed =
       (patch.categoryId !== undefined && patch.categoryId !== tx.categoryId) ||
       (patch.payeeId !== undefined && patch.payeeId !== tx.payeeId);
@@ -200,4 +203,79 @@ export async function applyRulesToTransactions() {
   revalidatePath("/reglas");
   revalidatePath("/");
   return { updated, total: allTransactions.length };
+}
+
+/**
+ * The rule engine, reachable while typing — ROADMAP §2.4.
+ *
+ * The rules already ran, but only from this page, in bulk, over rows that were
+ * already saved. That is the wrong end of the loop: the moment a category is
+ * worth getting right is while entering the transaction, and correcting it
+ * afterwards is exactly the work this is meant to remove (principle 4).
+ *
+ * Returns labels as well as ids, so the client can show what it found. That is
+ * the whole point of asking *before* saving: a category filled in silently is
+ * indistinguishable from one the user chose, and they would have no reason to
+ * check it.
+ *
+ * Read-only, so no revalidation — nothing was written. `createTransaction`
+ * applies the same resolution server-side as the safety net for entry points
+ * that don't go through this form.
+ */
+export async function suggestFromRules(input: {
+  description: string | null;
+  payeeId: string | null;
+  accountId: string;
+  amountMinor: number;
+}) {
+  const [fields, allCategories, allPayees] = await Promise.all([
+    resolveRuleFieldsFor(input),
+    db.select({ id: categories.id, name: categories.name }).from(categories),
+    db.select({ id: payees.id, name: payees.name }).from(payees),
+  ]);
+
+  const category = fields.categoryId
+    ? allCategories.find((c) => c.id === fields.categoryId)
+    : undefined;
+  const payee = fields.payeeId ? allPayees.find((p) => p.id === fields.payeeId) : undefined;
+
+  return {
+    categoryId: category?.id ?? null,
+    categoryName: category?.name ?? null,
+    payeeId: payee?.id ?? null,
+    payeeName: payee?.name ?? null,
+  };
+}
+
+/**
+ * Loads the enabled rules and resolves one transaction against them.
+ *
+ * Shared by the suggestion above and by `createTransaction`, which is the point:
+ * the two must agree, or the row that lands differs from the one the user was
+ * shown. A rule engine with two implementations is one whose suggestion is
+ * wrong half the time, with no way to tell which produced a given row.
+ */
+export async function resolveRuleFieldsFor(tx: {
+  description: string | null;
+  payeeId: string | null;
+  accountId: string;
+  amountMinor: number;
+}) {
+  const [allRules, allCategories, allPayees] = await Promise.all([
+    db.select().from(rules).where(eq(rules.enabled, true)).orderBy(asc(rules.sortOrder)),
+    db.select({ id: categories.id }).from(categories),
+    db.select({ id: payees.id }).from(payees),
+  ]);
+
+  const live: LiveTargets = {
+    categoryIds: new Set(allCategories.map((c) => c.id)),
+    payeeIds: new Set(allPayees.map((p) => p.id)),
+  };
+  const applicable: ApplicableRule[] = allRules.map((rule) => ({
+    conditions: rule.conditions as RuleCondition[],
+    actions: rule.actions as RuleAction[],
+    matchType: rule.matchType as RuleMatchType,
+  }));
+
+  return resolveRuleFields(tx, applicable, live);
 }

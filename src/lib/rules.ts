@@ -114,6 +114,94 @@ export function applyActions(
   return patch;
 }
 
+/** A rule as the engine needs it: the match, and what to do about it. */
+export type ApplicableRule = {
+  conditions: RuleCondition[];
+  actions: RuleAction[];
+  matchType: RuleMatchType;
+};
+
+/**
+ * Which action targets still exist.
+ *
+ * A rule's actions are a JSON blob, not a real foreign key, so deleting a
+ * category or payee leaves rules pointing at an id that is gone. Writing one
+ * would hit a raw FK error and abort whatever batch was running, so every
+ * consumer has to check before applying.
+ */
+export type LiveTargets = {
+  categoryIds: ReadonlySet<string>;
+  payeeIds: ReadonlySet<string>;
+};
+
+function actionIsLive(action: RuleAction, live: LiveTargets) {
+  return action.field === "categoryId"
+    ? live.categoryIds.has(action.value)
+    : live.payeeIds.has(action.value);
+}
+
+/** What the rules say this transaction's category and payee should be. */
+export type RuleFields = { categoryId?: string; payeeId?: string };
+
+/**
+ * The draft's own view of those two fields: null is "not set", which is a
+ * different thing from "set to nothing" and the distinction is the whole reason
+ * `applyRulesToDraft` only fills blanks.
+ */
+export type DraftFields = { categoryId?: string | null; payeeId?: string | null };
+
+/**
+ * Resolves a transaction against the whole rule set, in `sortOrder`.
+ *
+ * Later rules win, which is the precedence the batch "apply to all" has always
+ * used: the list is ordered by `sortOrder` and each match overwrites the last
+ * one's patch. The rules page shows that order for the same reason.
+ *
+ * Shared by both callers — the batch job and the suggestion on save — because
+ * the one thing that must not happen is for them to disagree. A rule engine with
+ * two implementations is a rule engine whose suggestion is wrong half the time,
+ * and the user has no way to tell which one the saved row came from.
+ */
+export function resolveRuleFields(
+  tx: RuleMatchable,
+  rules: ApplicableRule[],
+  live: LiveTargets
+): RuleFields {
+  const patch: { categoryId?: string; payeeId?: string | null } = {};
+  for (const rule of rules) {
+    if (!ruleMatches(tx, rule.conditions, rule.matchType)) continue;
+    applyActions(patch, rule.actions.filter((action) => actionIsLive(action, live)));
+  }
+  return {
+    categoryId: patch.categoryId ?? undefined,
+    payeeId: patch.payeeId ?? undefined,
+  };
+}
+
+/**
+ * The draft, with the rules filling in only what the user left blank.
+ *
+ * **Only blanks, never an override.** The user picking a category by hand is a
+ * decision, and a rule silently replacing it would be the worst kind of bug
+ * here: the row is saved, looks right, and is wrong. It would also make the
+ * suggestion invisible — you would not know a rule had touched it. Filling
+ * blanks gets the win ROADMAP §2.4 is after (less to correct afterwards)
+ * without ever fighting the user.
+ *
+ * A field no rule mentions is left exactly as it was, including an explicit
+ * blank: absence of a rule is not a reason to invent a value.
+ */
+export function applyRulesToDraft<T extends RuleMatchable & DraftFields>(
+  draft: T,
+  fields: RuleFields
+): T {
+  return {
+    ...draft,
+    categoryId: draft.categoryId ?? fields.categoryId ?? null,
+    payeeId: draft.payeeId ?? fields.payeeId ?? null,
+  };
+}
+
 /**
  * Removes any condition/action referencing one of `deletedIds` on `field`.
  * Rule conditions and actions store raw ids in a JSON blob, not a real

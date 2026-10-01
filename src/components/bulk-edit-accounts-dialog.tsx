@@ -10,6 +10,7 @@ import {
   ACCOUNT_STATUS_LABELS,
   ACCOUNT_TYPES,
   ACCOUNT_TYPE_LABELS,
+  labelItems,
   CURRENCIES,
   type AccountStatus,
   type AccountType,
@@ -40,7 +41,7 @@ export function BulkEditAccountsDialog({ ids, trigger }: { ids: string[]; trigge
         onEnabledChange={setTypeEnabled}
         value={type}
         onValueChange={setType}
-        items={Object.fromEntries(ACCOUNT_TYPES.map((t) => [t, ACCOUNT_TYPE_LABELS[t]]))}
+        items={labelItems(ACCOUNT_TYPES, ACCOUNT_TYPE_LABELS)}
         placeholder="Selecciona..."
       />
       <BulkEditSelectField
@@ -58,7 +59,7 @@ export function BulkEditAccountsDialog({ ids, trigger }: { ids: string[]; trigge
         onEnabledChange={setStatusEnabled}
         value={status}
         onValueChange={setStatus}
-        items={Object.fromEntries(ACCOUNT_STATUSES.map((s) => [s, ACCOUNT_STATUS_LABELS[s]]))}
+        items={labelItems(ACCOUNT_STATUSES, ACCOUNT_STATUS_LABELS)}
         placeholder="Selecciona..."
       />
     </BulkEditDialog>

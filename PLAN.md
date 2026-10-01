@@ -2,7 +2,11 @@
 
 > App de finanzas personales, self-hosted. **Destino: Raspberry Pi en Docker,
 > accesible desde cualquier dispositivo.**
-> Last review: 2026-09-27 · v0.1.0 · 1 115 transacciones, 8 cuentas, 44 reglas
+> Last review: 2026-09-30 · v0.1.0
+>
+> **La dirección de producto vive en `ROADMAP.md`; este documento lleva el
+> estado de lo ya hecho y por qué se midió así.** Este cuadro se actualizó el
+> 2026-09-30, después del lote de correcciones y agregación en SQL.
 
 ---
 
@@ -12,12 +16,19 @@
 |---|------|--------|
 | 1 | Autenticación | **Hecho** — `src/proxy.ts`, login, guard en actions |
 | 2 | Backups automáticos | **Hecho** — `VACUUM INTO` + servicio `backup` + simulacro de restauración probado |
-| 3 | Tests de la lógica de cálculo | **Hecho** — 61 tests en verde |
+| 3 | Tests de la lógica de cálculo | **Hecho** — 319 tests en verde (1 depende del ledger real) |
 | 4 | Índices en `transactions` | **Hecho** — 3 índices, medidos a 50k filas |
-| 5 | Paginación y filtrado en SQL | **Parcial** — `/transacciones` listo; faltan las páginas de agregación |
-| 6 | Despliegue en la Pi | **Pendiente** — ver §3 |
-| 7 | Bug de zona horaria | **Pendiente** — latente, 0 % de impacto en los datos actuales |
-| 8 | Producto (README, moneda, recurrentes proyectados) | **Pendiente** — ver §4 |
+| 5 | Paginación y filtrado en SQL | **Hecho** — `/transacciones` con URL como estado; el resto son agregados |
+| 6 | Agregación en SQL | **Hecho** — `src/lib/aggregates.ts`, 3,5× en `/` a 50k filas |
+| 7 | Verificación de los números | **Hecho** — tarjeta de integridad: splits que exceden y movimientos previos a la referencia |
+| 8 | Producto (comparaciones, recurrentes, captura) | **Parcial** — ver `ROADMAP.md` §1–2 |
+| 9 | Despliegue en la Pi | **Pendiente** — ver §3. Es lo que más importa ahora |
+
+> **Sobre las páginas de agregación (antes "parcial"):** no se van a paginar, y
+> no hace falta. `/`, `/cuentas`, `/presupuesto` y `/recurrentes` no muestran
+> listas de movimientos sino totales, así que la respuesta correcta no era
+> paginar sino dejar de traer 50 000 filas para reducirlas en memoria. Eso es lo
+> que hizo `aggregates.ts`, y por eso el ítem era "paginación" solo a medias.
 
 Detalle de lo hecho y sus mediciones: **Apéndice A**.
 
@@ -81,19 +92,34 @@ El `-wal`/`-shm` se borran porque pueden contener páginas más nuevas que
 pisarían el respaldo restaurado.
 
 
-### 2.2 Despliegue en la Pi — §3
+### 2.2 Despliegue en la Pi — §3 · **lo único que queda de esta lista**
 
-### 2.3 Agregación en SQL para las páginas de totales — ~1 día
+### 2.3 Agregación en SQL para las páginas de totales — HECHO
 
 `/recurrentes` (485 ms), `/` (513 ms) y `/presupuesto` (331 ms) a 50k filas.
 No se pueden paginar: necesitan totales. Hay que empujar la agregación a
 `GROUP BY` en SQL, reescribiendo `spending-stats.ts` y `recurrentes`.
 
-Es el último cuello de botella de datos que queda. Cuando esté, los índices de
-`category_id` y `currency` empiezan a justificarse (hoy no se usan porque todo
-se agrega en JS).
+**Hecho** en `src/lib/aggregates.ts`. Medido a 50 000 filas sobre el build de
+producción, medianas de tres pasadas con `npm run bench`:
 
-### 2.4 El markup de Tailwind es el nuevo piso — ~2 h
+| Página | Antes | Después | |
+|---|---|---|---|
+| `/` | 408 ms | **118 ms** | 3,5× |
+| `/cuentas` | 255 ms | **59 ms** | 4,3× |
+| `/recurrentes` | 256 ms | **122 ms** | 2,1× |
+| `/presupuesto` | 187 ms | **147 ms** | 1,3× |
+
+`balance.ts` y `spending-stats.ts` **no se borraron**: siguen siendo la
+implementación legible, y `aggregates.test.ts` comprueba contra la base real que
+cada función SQL devuelve lo que devuelve su gemela en JS. Esa comparación es la
+que encontró dos bugs de dinero (inventar historia en `netWorthTrend`, y meses
+en UTC en `detectRecurring`).
+
+Los índices de `category_id` y `currency` **no** se agregaron: la agregación es
+por mes y los tres índices existentes ya cubren ese rango. Ver `ROADMAP.md` §4.1.
+
+### 2.4 El markup de Tailwind es el nuevo piso — ~2 h · PENDIENTE
 
 Con la paginación resuelta, `/transacciones` bajó de 26,4 MB a 310 KB a 50k
 filas — pero 310 KB para **50 filas** es 4,7 KB por fila, casi todo clases de
@@ -102,18 +128,19 @@ El shell de la app son ~77 KB en **cada** página, constante.
 
 Es independiente del tamaño de la base: es lo que queda cuando el dato ya no
 es el problema. Opciones: reducir `PAGE_SIZE`, o extraer las clases repetidas a
-un `@apply` / componente.
+un `@apply` / componente. Ver `ROADMAP.md` §5.
 
-### 2.5 Bug de zona horaria — ~1 h
+### 2.5 Bug de zona horaria — HECHO
 
-`recurring.ts` agrupa meses por UTC; `month.ts` por hora local. **Medido:
-0 de 1 115 transacciones (0,00 %) caen en meses distintos**, así que hoy no
-produce ningún número incorrecto. Es latente, no activo — por eso va aquí y no
-antes. Se activa sola en cuanto entre un movimiento un día 1 después de las
-7 p. m. o un día 31 después de las 7 p. m.
+Eran **tres** instancias, no una. Dos eran latentes, y **una estaba activa**: el
+CSV exportaba fechas en UTC mientras la pantalla las muestra en hora local, y
+**21 de 1 115 movimientos salían con un día corrido** — en la frontera de mes,
+también en el mes equivocado, con el presupuesto y el CSV contando meses
+distintos.
 
-Arreglarlo cambia el resultado de `/recurrentes`, así que merece ir con tests
-que lo demuestren.
+Las otras dos: `recurring.ts` agrupaba meses con `toISOString()`, y los agregados
+SQL cada uno con su propia idea de mes. Ahora todo pasa por `monthKey()` (hora
+local) y `transactionMonth` (su equivalente en SQL). Ver `ROADMAP.md` §3.1.
 
 ---
 
@@ -186,11 +213,14 @@ es restaurar un backup — que es exactamente por qué §2.1 va primero.
 ## 4. Producto
 
 - **README real** — el actual es el de `create-next-app`. Esquema, decisiones de
-  diseño, cómo respaldar y restaurar, cómo desplegar.
-- **Conversión de moneda** — tabla de tasas (manual por mes basta). Sin esto,
-  "Patrimonio neto" son N gráficas separadas y no hay un número único.
-- **Recurrentes proyectados** — la detección ya funciona; falta proyectar los
-  próximos meses, avisar de subidas de precio y generar el movimiento del mes.
+  diseño, cómo respaldar y restaurar, cómo desplegar. *Parcial: se reescribió
+  junto al lote de agregación en SQL; falta la parte de despliegue, que es justo
+  lo que sigue pendiente.*
+- ~~**Conversión de moneda**~~ — **Hecho**, opt-in y con TRM automática
+  (`ROADMAP.md` §3.2).
+- ~~**Recurrentes proyectados**~~ — **Parcial**: la detección ya avisaba de
+  subidas de precio (§1.4) y proyecta los próximos 30 días (§1.5). Falta
+  *generar* el movimiento del mes, que es §2.2.
 - **Plantilla de presupuesto** — "copiar mes anterior", rollover visible
   (el cálculo ya existe, no es visible ni configurable), presets.
 - **Importador CSV/XLSX genérico** como fallback: hoy el parser solo entiende

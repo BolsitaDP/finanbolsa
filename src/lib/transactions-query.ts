@@ -66,6 +66,16 @@ export type TransactionFilters = {
   /** "all", "none" for uncategorised, or a category id. */
   category: string;
   /**
+   * "all" or a payee id.
+   *
+   * Separate from `q` on purpose. The merchant ranking shows what a merchant
+   * cost, and `q` would answer that with every row whose text happens to contain
+   * the merchant's name — a different, larger set that doesn't add up to the
+   * number next to it. Principle 3 of ROADMAP: a total you can't audit is a
+   * total you can't trust.
+   */
+  payee: string;
+  /**
    * 'YYYY-MM' to narrow to one calendar month, or "all".
    *
    * This exists so every total in the app can be audited: a budget envelope
@@ -85,6 +95,7 @@ export const DEFAULT_FILTERS: TransactionFilters = {
   type: "all",
   account: "all",
   category: "all",
+  payee: "all",
   month: "all",
   sort: DEFAULT_SORT,
   dir: "desc",
@@ -116,11 +127,20 @@ export function parseTransactionFilters(
   const type = TRANSACTION_TYPES.find((t) => t === rawType);
   const sort = (Object.keys(TRANSACTION_SORTS) as string[]).find((s) => s === rawSort);
 
+  // `||` and not `??` for the id filters, matching what `category` already did:
+  // a bare `?payee=` arrives as an empty string, which is neither a valid id nor
+  // the "all" sentinel. Left as "", it would reach the WHERE clause and match no
+  // row at all — a hand-edited or truncated link would silently show an empty
+  // table instead of the unfiltered list.
+  const rawAccount = first(params.account);
+  const rawPayee = first(params.payee);
+
   return {
     q,
     type: type ?? "all",
-    account: first(params.account) ?? "all",
+    account: rawAccount || "all",
     category: rawCategory && rawCategory !== "" ? rawCategory : "all",
+    payee: rawPayee || "all",
     month: MONTH_PATTERN.test(rawMonth ?? "") ? rawMonth! : "all",
     sort: (sort as TransactionSort | undefined) ?? DEFAULT_SORT,
     // Newest first is what people expect from a transaction list, so `desc` is
@@ -166,6 +186,9 @@ export function buildTransactionQuery(filters: TransactionFilters): TransactionQ
   }
   if (filters.account !== "all") {
     conditions.push(eq(transactions.accountId, filters.account));
+  }
+  if (filters.payee !== "all") {
+    conditions.push(eq(transactions.payeeId, filters.payee));
   }
   if (filters.category === "none") {
     // "Sin categoría" is the weekly chore: reviewing what arrived uncategorised
@@ -215,6 +238,7 @@ export function buildTransactionQuery(filters: TransactionFilters): TransactionQ
   if (filters.type !== "all") params.set("type", filters.type);
   if (filters.account !== "all") params.set("account", filters.account);
   if (filters.category !== "all") params.set("category", filters.category);
+  if (filters.payee !== "all") params.set("payee", filters.payee);
   if (filters.month !== "all") params.set("month", filters.month);
   if (filters.sort !== DEFAULT_SORT) params.set("sort", filters.sort);
   if (filters.dir !== "desc") params.set("dir", filters.dir);
@@ -241,6 +265,7 @@ export function auditLink(filters: {
   month?: string;
   type?: TransactionType;
   account?: string;
+  payee?: string;
   q?: string;
 }): string {
   const merged: TransactionFilters = {
@@ -249,6 +274,7 @@ export function auditLink(filters: {
     type: filters.type ?? "all",
     account: filters.account ?? "all",
     category: filters.category ?? "all",
+    payee: filters.payee ?? "all",
     month: filters.month ?? "all",
   };
   return `/transacciones${filtersToQueryString(merged)}`;

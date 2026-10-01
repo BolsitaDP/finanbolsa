@@ -11,8 +11,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { PriceChangeBadge, PriceChangesCard } from "@/components/price-changes";
+import { UpcomingChargesCard } from "@/components/upcoming-charges-card";
 import { recurringCandidates } from "@/lib/aggregates";
 import { detectRecurring } from "@/lib/recurring";
+import { projectUpcoming } from "@/lib/recurring-projection";
 import { formatDate, formatMoney } from "@/lib/format";
 
 // Reads live data with no dynamic API to force Next to treat it as such —
@@ -38,6 +41,11 @@ export default async function RecurrentesPage() {
   for (const r of recurring) {
     monthlyByCurrency.set(r.currency, (monthlyByCurrency.get(r.currency) ?? 0) + r.averageAmountMinor);
   }
+
+  // De informe a pronóstico: los mismos cargos recurrentes, contados solo si
+  // caen dentro de la ventana. Sale de lo que ya está calculado arriba, así que
+  // no cuesta una consulta.
+  const projections = projectUpcoming(recurring, new Date());
 
   return (
     <div className="flex flex-col gap-6">
@@ -67,6 +75,10 @@ export default async function RecurrentesPage() {
         </div>
       )}
 
+      <PriceChangesCard groups={recurring} />
+
+      <UpcomingChargesCard projections={projections} />
+
       <Card>
         <CardHeader>
           <CardTitle>{recurring.length} gastos recurrentes detectados</CardTitle>
@@ -87,6 +99,7 @@ export default async function RecurrentesPage() {
                   <TableHead className="text-right">Meses vistos</TableHead>
                   <TableHead>Última vez</TableHead>
                   <TableHead className="text-right">Total gastado</TableHead>
+                  <TableHead>Último cambio</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -109,6 +122,20 @@ export default async function RecurrentesPage() {
                     <TableCell>{formatDate(r.lastDate)}</TableCell>
                     <TableCell className="text-right">
                       {formatMoney(r.totalAmountMinor, r.currency)}
+                    </TableCell>
+                    <TableCell>
+                      {r.priceChange ? (
+                        // El tooltip lleva los dos montos: el badge solo tiene
+                        // espacio para el porcentaje, y el porcentaje sin el
+                        // "de cuánto a cuánto" no dice nada.
+                        <span
+                          title={`${formatMoney(r.priceChange.previousAverageMinor, r.currency)} → ${formatMoney(r.priceChange.latestAmountMinor, r.currency)}`}
+                        >
+                          <PriceChangeBadge change={r.priceChange} />
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

@@ -31,7 +31,13 @@ import { CategorySelect } from "@/components/category-select";
 
 import { bulkImportTransactions, parseStatement } from "@/app/(app)/importar/actions";
 import type { ParsedGroup } from "@/lib/import-types";
-import { TRANSACTION_TYPES, TRANSACTION_TYPE_LABELS, type Currency, type TransactionType } from "@/lib/enums";
+import {
+  TRANSACTION_TYPES,
+  TRANSACTION_TYPE_LABELS,
+  labelItems,
+  type Currency,
+  type TransactionType,
+} from "@/lib/enums";
 import { formatMoney } from "@/lib/format";
 import { projectTripItems } from "@/lib/project-options";
 
@@ -521,7 +527,7 @@ const GroupRow = memo(function GroupRow({
         <Combobox
           value={g.typeChoice}
           onValueChange={(v) => v && updateGroup(g.key, { typeChoice: v as TransactionType })}
-          items={Object.fromEntries(TRANSACTION_TYPES.map((t) => [t, TRANSACTION_TYPE_LABELS[t]]))}
+          items={labelItems(TRANSACTION_TYPES, TRANSACTION_TYPE_LABELS)}
           className="h-7 w-full text-sm"
         />
       </TableCell>

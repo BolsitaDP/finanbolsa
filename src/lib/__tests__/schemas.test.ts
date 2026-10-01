@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   bulkTransactionPatchSchema,
   findInvalidTransfers,
+  findOversplit,
   formatIssues,
   parseOrThrow,
   transactionInputSchema,
@@ -184,5 +185,43 @@ describe("findInvalidTransfers", () => {
   it("reports every offending id, not just the first", () => {
     const rows = [row({ id: 1 }), row({ id: 2 }), row({ id: 3 })];
     expect(findInvalidTransfers({ type: "transfer" }, rows)).toEqual([1, 2, 3]);
+  });
+});
+
+describe("findOversplit", () => {
+  const split = (amountMinor: number) => ({ amountMinor });
+
+  it("reports the excess when the breakdown claims more than the transaction", () => {
+    // El bug: 150.000 + 80.000 sobre un retiro de 100.000. Cada split se cuenta
+    // completo y el remanente negativo se descarta, así que las categorías
+    // acababan reclamando 230.000 de un movimiento de 100.000.
+    expect(findOversplit([split(150_000), split(80_000)], 100_000)).toEqual({
+      splitTotal: 230_000,
+      excessMinor: 130_000,
+    });
+  });
+
+  it("stays quiet on a breakdown that fits exactly", () => {
+    // El borde legítimo: un desglose completo sin remanente es el caso normal de
+    // un retiro de efectivo del que uno se acuerda por partes.
+    expect(findOversplit([split(60_000), split(40_000)], 100_000)).toBeNull();
+  });
+
+  it("stays quiet on a partial breakdown, which leaves a remainder by design", () => {
+    expect(findOversplit([split(30_000)], 100_000)).toBeNull();
+  });
+
+  it("stays quiet with no splits at all", () => {
+    expect(findOversplit([], 100_000)).toBeNull();
+  });
+
+  it("is decided by a single peso, not by a tolerance", () => {
+    // No hay margen: atribuir un peso de más ya es un peso de más. Un redondeo
+    // "razonable" aquí escondería exactamente el caso que la función existe para
+    // encontrar.
+    expect(findOversplit([split(100_001)], 100_000)).toEqual({
+      splitTotal: 100_001,
+      excessMinor: 1,
+    });
   });
 });

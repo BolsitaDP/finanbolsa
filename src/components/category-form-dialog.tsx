@@ -27,7 +27,13 @@ import { Input } from "@/components/ui/input";
 import { Combobox } from "@/components/ui/combobox";
 
 import { createCategory, updateCategory } from "@/app/(app)/categorias/actions";
-import { CATEGORY_KINDS, CATEGORY_STATUSES } from "@/lib/enums";
+import {
+  CATEGORY_KINDS,
+  CATEGORY_KIND_LABELS,
+  CATEGORY_STATUSES,
+  CATEGORY_STATUS_LABELS,
+  labelItems,
+} from "@/lib/enums";
 
 const schema = z.object({
   name: z.string().min(1, "Requerido"),
@@ -155,7 +161,7 @@ export function CategoryFormDialog({
                       <Combobox
                         value={field.value}
                         onValueChange={field.onChange}
-                        items={Object.fromEntries(CATEGORY_KINDS.map((k) => [k, k]))}
+                        items={labelItems(CATEGORY_KINDS, CATEGORY_KIND_LABELS)}
                         className="w-full"
                       />
                     </FormControl>
@@ -173,7 +179,7 @@ export function CategoryFormDialog({
                       <Combobox
                         value={field.value}
                         onValueChange={field.onChange}
-                        items={Object.fromEntries(CATEGORY_STATUSES.map((s) => [s, s]))}
+                        items={labelItems(CATEGORY_STATUSES, CATEGORY_STATUS_LABELS)}
                         className="w-full"
                       />
                     </FormControl>

@@ -1,0 +1,5 @@
+# Keep in sync with the node:22 base image in Dockerfile.
+# better-sqlite3@13 requires Node >=22; on Node 20 its prebuild segfaults
+# inside napi_module_register_by_symbol instead of raising a catchable error.
+[tools]
+node = "22"

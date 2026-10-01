@@ -3,7 +3,7 @@ import { desc, eq, isNull } from "drizzle-orm";
 import { ArrowDownIcon, ArrowUpIcon } from "lucide-react";
 
 import { db } from "@/db";
-import { accounts, budgets, categories, settings, transactions } from "@/db/schema";
+import { accounts, budgets, categories, payees, settings, transactions } from "@/db/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -22,11 +22,18 @@ import {
   buildCategoryDeltas,
   MonthOverMonthCard,
 } from "@/components/month-over-month";
+import { buildPayeeDeltas, TopPayeesCard } from "@/components/top-payees";
+import { SpendOutliersCard } from "@/components/spend-outliers-card";
+import { LedgerIntegrityCard } from "@/components/ledger-integrity-card";
+import { detectSpendOutliers, monthElapsedFraction, BASELINE_MONTHS } from "@/lib/spend-outliers";
+import { findMovementsBeforeReference, findOversplitTransactions } from "@/lib/ledger-integrity";
 import { netWorthTrendFromMonthly } from "@/lib/balance";
 import {
   currentBalances,
+  loadIntegrityInput,
   movementByAccountAndMonth,
-  spendByCategoryInMonth,
+  spendByCategoryByMonth,
+  spendByPayeeInMonth,
   totalsByMonth,
   totalsFor,
 } from "@/lib/aggregates";
@@ -63,6 +70,9 @@ export default async function DashboardPage() {
   const currentMonth = monthKey(new Date());
   const lastMonth = shiftMonth(currentMonth, -1);
   const TREND_MONTHS = 12;
+  // Suficientes para reconocer al comercio grande sin volver la tarjeta un
+  // segundo ranking que nadie lee hasta la octava fila.
+  const TOP_PAYEES = 5;
 
   // Everything the cards need is a GROUP BY, not a table scan. The full
   // transaction list used to be loaded here just to be reduced in memory; at
@@ -72,23 +82,78 @@ export default async function DashboardPage() {
     allAccounts,
     allCategories,
     allBudgets,
+    allPayees,
     settingsRow,
     balances,
     totals,
-    spendThisMonth,
-    spendLastMonth,
+    spendByMonth,
+    payeesThisMonth,
+    payeesLastMonth,
+    integrity,
   ] = await Promise.all([
     db.select().from(accounts),
     db.select().from(categories),
     db.select().from(budgets),
+    db.select().from(payees),
     db.select().from(settings).where(eq(settings.id, "default")).then((r) => r[0]),
     currentBalances(),
     totalsByMonth([currentMonth, lastMonth]),
-    spendByCategoryInMonth(currentMonth),
-    // One extra GROUP BY, same cost as the one above. It buys the comparison
-    // card below, which is the question this page exists to answer.
-    spendByCategoryInMonth(lastMonth),
+    // Una sola pasada trae los siete meses que necesitan las tres tarjetas de
+    // abajo: el mes en curso, el anterior, y los seis de base para la alerta de
+    // atípicos. Pedirlos por separado serían tres escaneos de las mismas filas.
+    spendByCategoryByMonth(
+      Array.from({ length: BASELINE_MONTHS + 1 }, (_, i) => shiftMonth(currentMonth, -i))
+    ),
+    // Dos GROUP BY más para el ranking de comercios, uno por mes.
+    spendByPayeeInMonth(currentMonth),
+    spendByPayeeInMonth(lastMonth),
+    // Y una pasada de integridad: los saldos son derivados, así que un dato
+    // inconsistente no da error, da un número que no es el real. Solo se calcula
+    // en el inicio —es una revisión, no algo que haya que recalcular mientras
+    // alguien escribe— y no rinde tarjeta cuando no encuentra nada.
+    loadIntegrityInput(),
   ]);
+
+  const forMonth = (month: string) =>
+    spendByMonth
+      .filter((row) => row.month === month)
+      .map(({ categoryId, currency, amountMinor }) => ({ categoryId, currency, amountMinor }));
+  const spendThisMonth = forMonth(currentMonth);
+  const spendLastMonth = forMonth(lastMonth);
+
+  // Los hallazgos de integridad se calculan una vez y se pasan ya resueltos: el
+  // agrupamiento por movimiento necesita saber los splits de cada transacción,
+  // y hacerlo en el componente obligaría a traerlos todos otra vez.
+  const splitsByTransaction = new Map<number, { amountMinor: number }[]>();
+  for (const split of integrity.splits) {
+    const list = splitsByTransaction.get(split.transactionId) ?? [];
+    list.push({ amountMinor: split.amountMinor });
+    splitsByTransaction.set(split.transactionId, list);
+  }
+  const transactionsById = new Map(integrity.movements.map((m) => [m.id, m]));
+  const integrityFindings = {
+    beforeReference: findMovementsBeforeReference(integrity.accounts, integrity.movements),
+    oversplits: findOversplitTransactions(
+      [...splitsByTransaction.keys()].flatMap((transactionId) => {
+        const parent = transactionsById.get(transactionId);
+        const splits = splitsByTransaction.get(transactionId) ?? [];
+        // Sin el movimiento padre no hay con qué comparar, y un split huérfano
+        // apuntaría a nada: la FK lo previene, pero un borrado manual dejaría
+        // datos que no se pueden ni mostrar ni arreglar.
+        if (!parent || splits.length === 0) return [];
+        return [
+          {
+            transactionId,
+            currency: parent.currency,
+            date: parent.date,
+            description: parent.description,
+            parentAmount: parent.amountMinor,
+            splits,
+          },
+        ];
+      })
+    ),
+  };
 
   // The trend reconstructs month-end balances by unwinding movements, which
   // only needs each month's SUM — so the movements are summed by month in SQL
@@ -105,6 +170,29 @@ export default async function DashboardPage() {
 
   const categoryName = new Map(allCategories.map((c) => [c.id, c.name]));
   const accountName = new Map(allAccounts.map((a) => [a.id, a.name]));
+  const payeeName = new Map(allPayees.map((p) => [p.id, p.name]));
+
+  // ¿Algo se te está yendo de las manos?, contra el promedio de los últimos
+  // seis meses de cada categoría. Solo tiene sentido por moneda, así que se
+  // calcula una vez por cada una que aparece en los datos, con la misma regla
+  // callada de las otras tarjetas.
+  const outlierCurrencies = settingsRow?.convertCurrency
+    ? [settingsRow.baseCurrency]
+    : [...new Set(spendByMonth.map((row) => row.currency))];
+  const outliers = outlierCurrencies.flatMap((currency) =>
+    detectSpendOutliers(
+      spendByMonth.filter((row) => row.currency === currency),
+      {
+        currentMonth,
+        baselineMonths: Array.from({ length: BASELINE_MONTHS }, (_, i) =>
+          shiftMonth(currentMonth, -(i + 1))
+        ),
+        // El mes en curso va a medias hasta el día 30, y compararlo contra meses
+        // completos haría que la alerta salte tarde o nunca.
+        elapsedFraction: monthElapsedFraction(new Date(), currentMonth),
+      }
+    )
+  );
 
   const expenseThisMonth = totalsFor(totals, currentMonth, "expense");
   const expenseLastMonth = totalsFor(totals, lastMonth, "expense");
@@ -150,6 +238,12 @@ export default async function DashboardPage() {
   const comparisonCurrencies = settingsRow?.convertCurrency
     ? [settingsRow.baseCurrency]
     : [...new Set([...spendThisMonth, ...spendLastMonth].map((c) => c.currency))];
+
+  // El ranking de comercios sigue la misma regla y por la misma razón: un dólar
+  // no es un peso, así que se separa por moneda en vez de sumar.
+  const payeeCurrencies = settingsRow?.convertCurrency
+    ? [settingsRow.baseCurrency]
+    : [...new Set([...payeesThisMonth, ...payeesLastMonth].map((p) => p.currency))];
 
   const budgetsThisMonth = allBudgets.filter((b) => b.month === currentMonth);
   const overBudgetCount = budgetsThisMonth.filter((b) => {
@@ -285,6 +379,13 @@ export default async function DashboardPage() {
         </Card>
       )}
 
+      <LedgerIntegrityCard
+        beforeReference={integrityFindings.beforeReference}
+        oversplits={integrityFindings.oversplits}
+      />
+
+      <SpendOutliersCard outliers={outliers} categoryName={categoryName} currentMonth={currentMonth} />
+
       {comparisonCurrencies.map((currency) => {
         const deltas = buildCategoryDeltas(
           spendThisMonth.filter((c) => c.currency === currency),
@@ -302,6 +403,25 @@ export default async function DashboardPage() {
             currentTotal={expenseThisMonth.get(currency) ?? 0}
             previousTotal={expenseLastMonth.get(currency) ?? 0}
             currency={currency}
+          />
+        );
+      })}
+
+      {payeeCurrencies.map((currency) => {
+        const deltas = buildPayeeDeltas(
+          payeesThisMonth.filter((p) => p.currency === currency),
+          payeesLastMonth.filter((p) => p.currency === currency),
+          TOP_PAYEES
+        );
+        if (deltas.length === 0) return null;
+        return (
+          <TopPayeesCard
+            key={`payees-${currency}`}
+            deltas={deltas}
+            payeeName={payeeName}
+            currency={currency}
+            currentMonth={currentMonth}
+            previousMonth={lastMonth}
           />
         );
       })}

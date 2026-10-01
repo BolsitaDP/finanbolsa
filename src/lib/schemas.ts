@@ -132,3 +132,44 @@ export function findInvalidTransfers(
   }
   return bad;
 }
+
+/**
+ * The input of the duplicate check (ROADMAP §2.5).
+ *
+ * Validated like every other action input, for the same reason: a server action
+ * is an endpoint that accepts whatever JSON it is posted, and this one reaches a
+ * `WHERE` clause. A malformed date here would otherwise become an invalid Date
+ * and a range that matches nothing — which reads as "no duplicates", the one
+ * answer that must never be wrong in the direction of silence.
+ */
+export const duplicateCheckSchema = z.object({
+  id: z.number().int().positive().optional(),
+  date: z.date(),
+  amountMinor: z.number().finite(),
+  currency: z.enum(CURRENCIES),
+  payeeId: optionalText,
+  description: optionalText,
+});
+
+/**
+ * Splits that attribute more money than the transaction being split.
+ *
+ * A split is supposed to *move* an amount between categories, never create it —
+ * that invariant is what `splits.test.ts` exists to protect. Nothing enforced
+ * it at the boundary, though: each split was only checked for being a
+ * non-negative number, so a 100.000 withdrawal could be split into 150.000 of
+ * "mercado" plus 80.000 of "carnes". Both splits are counted in full by
+ * `categoryAllocations` while the negative remainder is dropped, so every total
+ * downstream — categories, budget, statistics — ends up with 230.000 of spending
+ * from a 100.000 movement. Invented money, silently.
+ *
+ * Returns the excess so the caller can put a number in the error message; the
+ * per-split paths are reported too because "the splits add up wrong" is easier
+ * to act on than "split 2 is invalid".
+ */
+export function findOversplit(splits: { amountMinor: number }[], parentAmountMinor: number) {
+  const splitTotal = splits.reduce((s, split) => s + split.amountMinor, 0);
+  const excessMinor = splitTotal - parentAmountMinor;
+  if (excessMinor <= 0) return null;
+  return { splitTotal, excessMinor };
+}

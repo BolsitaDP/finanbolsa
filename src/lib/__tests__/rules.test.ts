@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { applyActions, ruleMatches, stripStaleRuleReferences, type RuleMatchable } from "@/lib/rules";
+import {
+  applyActions,
+  applyRulesToDraft,
+  resolveRuleFields,
+  ruleMatches,
+  stripStaleRuleReferences,
+  type ApplicableRule,
+  type LiveTargets,
+  type RuleMatchable,
+} from "@/lib/rules";
 import type { RuleAction, RuleCondition } from "@/lib/rules-types";
 
 /**
@@ -242,5 +251,153 @@ describe("stripStaleRuleReferences", () => {
 
     expect(result.conditions).toEqual([]);
     expect(ruleMatches(tx(), result.conditions, "all")).toBe(false);
+  });
+});
+
+/**
+ * ROADMAP §2.4 — the suggestion shown while typing, and the fill that runs on
+ * save. Both go through `resolveRuleFields`, so the tests that matter most here
+ * are the ones about **not** overwriting the user: a rule that silently replaces
+ * a hand-picked category is the worst bug this feature could have, because the
+ * row looks right and is wrong, and nothing in the UI says a rule touched it.
+ */
+
+// The live sets hold what still exists. `cat-borrada` and `pay-borrado` are
+// deliberately absent: that is the whole scenario the "dead action" tests below
+// are about, and putting them in here would make those tests pass for the wrong
+// reason.
+const live: LiveTargets = {
+  categoryIds: new Set(["cat-mercado", "cat-transporte"]),
+  payeeIds: new Set(["pay-rappi"]),
+};
+
+const rule = (over: Partial<ApplicableRule> = {}): ApplicableRule => ({
+  conditions: [cond()],
+  actions: [action()],
+  matchType: "all",
+  ...over,
+});
+
+describe("resolveRuleFields", () => {
+  it("returns the category a matching rule points at", () => {
+    expect(resolveRuleFields(tx(), [rule()], live)).toEqual({
+      categoryId: "cat-mercado",
+      payeeId: undefined,
+    });
+  });
+
+  it("returns nothing when no rule matches", () => {
+    const noMatch = rule({ conditions: [cond({ value: "rappi" })] });
+
+    expect(resolveRuleFields(tx(), [noMatch], live)).toEqual({
+      categoryId: undefined,
+      payeeId: undefined,
+    });
+  });
+
+  it("lets a later rule win, which is the precedence the batch apply already used", () => {
+    // The rules page shows and edits this order, so the suggestion and the batch
+    // job have to agree on it or the same transaction ends up in two categories
+    // depending on which one ran.
+    const rules = [
+      rule({ actions: [action({ value: "cat-mercado" })] }),
+      rule({ actions: [action({ value: "cat-transporte" })] }),
+    ];
+
+    expect(resolveRuleFields(tx(), rules, live).categoryId).toBe("cat-transporte");
+  });
+
+  it("ignores an action pointing at a deleted category", () => {
+    // A rule's actions are a JSON blob, not a foreign key, so deleting a
+    // category leaves rules referencing an id that no longer exists. Writing one
+    // would abort the whole save with a raw FK error.
+    const stale = rule({ actions: [action({ value: "cat-borrada" })] });
+
+    expect(resolveRuleFields(tx(), [stale], live).categoryId).toBeUndefined();
+  });
+
+  it("ignores an action pointing at a deleted payee", () => {
+    const stale = rule({ actions: [action({ field: "payeeId", value: "pay-borrado" })] });
+
+    expect(resolveRuleFields(tx(), [stale], live).payeeId).toBeUndefined();
+  });
+
+  it("resolves both fields from one rule", () => {
+    const both = rule({
+      actions: [action(), action({ field: "payeeId", value: "pay-rappi" })],
+    });
+
+    expect(resolveRuleFields(tx(), [both], live)).toEqual({
+      categoryId: "cat-mercado",
+      payeeId: "pay-rappi",
+    });
+  });
+
+  it("still applies the live action of a rule that also has a dead one", () => {
+    // Filtering per action, not per rule: dropping the whole rule would lose the
+    // part that still works.
+    const mixed = rule({
+      actions: [action({ value: "cat-borrada" }), action({ value: "cat-transporte" })],
+    });
+
+    expect(resolveRuleFields(tx(), [mixed], live).categoryId).toBe("cat-transporte");
+  });
+});
+
+describe("applyRulesToDraft", () => {
+  const draft = (over = {}) => ({
+    description: "COMPRA EN EXITO SA",
+    payeeId: null,
+    accountId: "acc-1",
+    amountMinor: 50_000,
+    categoryId: null,
+    ...over,
+  });
+
+  it("fills a category the user left blank", () => {
+    expect(applyRulesToDraft(draft(), { categoryId: "cat-mercado" }).categoryId).toBe("cat-mercado");
+  });
+
+  it("never overrides a category the user chose", () => {
+    // La regla de todo §2.4. Elegir una categoría a mano es una decisión, y que
+    // una regla la sustituya en silencio sería el peor bug posible: la fila se
+    // guarda, se ve bien, y está mal — sin nada en la UI que diga que una regla
+    // la tocó.
+    expect(applyRulesToDraft(draft({ categoryId: "cat-transporte" }), { categoryId: "cat-mercado" }).categoryId).toBe(
+      "cat-transporte"
+    );
+  });
+
+  it("leaves the field empty when no rule mentions it", () => {
+    // La ausencia de una regla no es razón para inventar un valor.
+    expect(applyRulesToDraft(draft(), { payeeId: "pay-rappi" }).categoryId).toBeNull();
+  });
+
+  it("fills each field independently", () => {
+    const filled = applyRulesToDraft(
+      draft({ payeeId: "pay-elegido" }),
+      { categoryId: "cat-mercado", payeeId: "pay-rappi" }
+    );
+
+    expect(filled.categoryId).toBe("cat-mercado");
+    expect(filled.payeeId).toBe("pay-elegido");
+  });
+
+  it("is a no-op when the rules found nothing", () => {
+    const original = draft();
+
+    expect(applyRulesToDraft(original, {})).toEqual(original);
+  });
+
+  it("keeps every other field of the draft untouched", () => {
+    // The draft is spread, not rebuilt: a field the engine knows nothing about
+    // must survive, including ones added to the form later.
+    const filled = applyRulesToDraft(
+      { ...draft(), notes: "cena con los demás", projectTrip: "vacaciones" },
+      { categoryId: "cat-mercado" }
+    );
+
+    expect(filled.notes).toBe("cena con los demás");
+    expect(filled.projectTrip).toBe("vacaciones");
   });
 });

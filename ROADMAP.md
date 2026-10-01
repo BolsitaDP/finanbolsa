@@ -172,11 +172,22 @@ el valor viejo. Sin toast de éxito, tampoco sabes que guardó.
 las tres renderizan un chip "Filtrado por …". Ese filtro es **inalcanzable
 salvo editando la URL a mano**. La pieza existe, funciona, y no está conectada.
 
-**(g) Enums en inglés en la UI en español.** Effort **S**. — **HECHO (cuentas; falta resto)**
+**(g) Enums en inglés en la UI en español.** Effort **S**. — **HECHO**
 `{row.original.status}`, `{row.original.kind}`, `{tx.type}` y
 `a.type.replace("_"," ")` se renderizan crudos, y los pickers de bulk edit
-muestran `"credit card"`, `"active"`, `"expense"`. `lib/enums.ts` ya tiene
-`ACCOUNT_STATUSES` y `TRANSACTION_TYPE_LABELS`; solo falta usarlos.
+mostraban `"credit card"`, `"active"`, `"expense"`. `lib/enums.ts` ya tenía
+`ACCOUNT_STATUSES` y `TRANSACTION_TYPE_LABELS`; solo faltaba usarlos.
+
+El arreglo fue **una función, no doce ediciones**. El patrón
+`Object.fromEntries(TYPES.map(t => [t, LABELS[t]]))` estaba escrito nueve veces,
+y cuatro de las nueve se habían desincronizado: dos usaban
+`t.replace("_", " ")` y tres usaban el valor crudo. Duplicar el patrón era
+justo lo que dejaba que se desincronizaran, así que ahora es `labelItems()` en
+`lib/enums.ts` y no hay forma de traducir un picker y olvidar el siguiente.
+
+También: la columna **Estado** de `/categorias` no tenía `cell`, así que TanStack
+pintaba el valor crudo de la base — "active" al lado de "Activa" en la tabla de
+cuentas.
 
 **(h) "Filas por página" es un no-op en `/transacciones`.** Effort **S**. — **PENDIENTE**
 El selector persiste un valor en localStorage que la app nunca vuelve a leer
@@ -274,30 +285,155 @@ que no puede discrepar de la tabla de debajo. `summarizeMonth` es pura y tiene
 - **Igual que el mes anterior** se dice literalmente, no como 0% redondeado.
 
 Effort **M**, hecho.
-### 1.3 Alerta de gasto fuera de lo normal
+### 1.3 Alerta de gasto fuera de lo normal — HECHO
 
 *"Este mes gastaste 3,2x tu promedio en la categoría Compras"*. Detecta el valor
 atípico comparando contra el promedio de los últimos 6 meses de esa categoría.
 Es el tipo de cosa que detecta una fuga pequeña antes de que sea grande.
-Effort **M**.
 
-### 1.4 Alerta de suscripción que sube de precio
+La comparación mes-contra-mes que ya existía no servía: comparar contra **un**
+mes no es una base, porque una categoría normal se ve rara cualquier mes que le
+toque.
 
-`recurring.ts` ya agrupa suscripciones y calcula el promedio. Falta comparar
-el **último monto contra el promedio histórico** y avisar: *"Netflix subió de
-$35.000 a $42.000"*. Es el número que más duele y el más fácil de ver.
-Effort **S** — ladata ya está calculada.
+**Lo que hace que la tarjeta sea útil es que se calle.** Tres reglas, y las tres
+son la diferencia entre una alerta y ruido:
 
-### 1.5 Lo que viene este mes
+1. **La base se proratea con la parte del mes que ya pasó.** Sin esto la alerta
+   llega tarde o nunca: comparar el mes en curso contra meses completos
+   subestima el mes a la mitad, y una categoría que va a terminar en 1.300.000
+   cruzaría el umbral recién el día 30, cuando no hay nada que hacer con el dato.
+   Prorateando, la fuga se ve el día 15. El supuesto —que el gasto se reparte
+   parejo en el mes— es falso para un arriendo que cae el día 1, y está escrito
+   en el código en vez de escondido.
+2. **La base tiene que ser estable.** "Reparaciones" (0, 500.000, 0) tiene un
+   promedio bajo y cualquier mes normal parecería una anomalía. Con un tope de
+   variación del 60% sobre los meses con gasto, esas categorías no generan
+   alertas, que es lo correcto: un pico ahí es lo esperado. Es el mismo
+   razonamiento que el coeficiente de variación de `detectRecurring`, que separa
+   una suscripción de una parada frecuente.
+3. **Tres meses mínimo, y el umbral es 3x estricto.** Un mes de base no es un
+   promedio. Y 3,00x es indistinguible de 2,99x, así que la comparación es `>` y
+   no `>=`: una tarjeta que se enciende en la frontera se enciende siempre.
 
-Usando los recurrentes detectados, proyectar el gasto de los próximos 30 días
-y mostrar "gastos previstos ≈ $340.000". Convierte `/recurrentes` de un
-listado en un pronóstico. Effort **M**.
+**Ordena por el exceso, no por el ratio.** 3,2x sobre una base de 400.000 son
+880.000 de sobra; 8x sobre una base de 20.000 son 140.000. El ratio pone al
+segundo primero y esconde la fuga grande, que es la que importa.
 
-### 1.6 Ranking de comercios
+Effort **M**, hecho. `detectSpendOutliers` es pura, con 22 tests — la mayoría de
+ellos sobre los casos en que **no** avisa, que es donde está el riesgo.
+
+### 1.4 Alerta de suscripción que sube de precio — HECHO
+
+`recurring.ts` ya agrupaba suscripciones y calculaba el promedio. Falta comparar
+el **último monto contra lo que costaba antes** y avisar: *"Netflix subió de
+$35.000 a $42.000"*. Es el número que más duele y el más fácil de no ver: es el
+único de la app que puede moverse **sin que nada en la base de datos cambie de
+aspecto** — el movimiento sigue pareciendo un movimiento más, y el promedio
+mensual se lo come.
+
+**La comparación es contra los cargos anteriores, no contra el promedio del
+grupo.** El promedio del grupo incluye el cargo nuevo, así que una subida del
+20% sobre cuatro meses se diluye a ~5% y desaparece. Con tres cargos de
+35/35/42, el promedio es 37.3k y comparar contra él daría un "aumento del 12%"
+sobre una base que ya contiene la subida.
+
+**Dos umbrales, y gana el mayor.** El ratio (10%) es lo que el usuario lee, pero
+por sí solo trata un plan de 3.000 → 3.300 igual de fuerte que uno de
+35.000 → 42.000. El segundo umbral es la **desviación de los cargos anteriores**:
+una suscripción que ya se mueve cada mes no avisa por moverse dentro de ese
+movimiento. Al salir de los datos, no necesita un mínimo en pesos, y por eso la
+misma regla sirve para un plan en dólares facturado en pesos.
+
+Tres decisiones que **no** se tomaron, y por qué:
+
+- **Es unidireccional.** Bajar no avisa. Un plan más barato es buena noticia y la
+  tarjeta no tiene espacio para decirlo sin insinuar que algo va mal.
+- **No reavisa de una subida antigua.** Se compara el último cargo contra todos
+  los anteriores, así que una suscripción que subió tres veces y lleva un año
+  estable no muestra alerta. Es la lectura honesta: no cambió últimamente.
+- **No se promulgó ningún error nuevo.** Subió, lo que es una señal de que hay
+  algo que revisar, no una afirmación de que esté mal. Por eso vive en
+  `/recurrentes`, que es un informe, y no en el dashboard.
+
+**El punto ciego, fijado con un test:** una subida lo bastante brusca para romper
+el coeficiente de variación (35k → 90k da ~0.49, sobre el techo de 0.35) hace
+que el grupo **deje de reconocerse como suscripción**, así que no hay nada que
+comparar. El detector asume estabilidad y por eso no puede detectar que dejó de
+ser estable. Cerrarlo pide una tendencia por grupo en vez de una prueba de
+estabilidad, que es parte de §2.2.
+
+Effort **M**, hecho. `detectPriceIncrease` es pura y tiene 8 tests; el resto
+cubre que el comparativo sea el correcto y que no reavise.
+
+### 1.5 Lo que viene este mes — HECHO
+
+Usando los recurrentes detectados, proyectar el gasto de los próximos 30 días y
+mostrar "gastos previstos ≈ $340.000". Convierte `/recurrentes` de un listado
+en un pronóstico. Effort **M**.
+
+Tres cosas que el `GROUP BY` no daba y que sí importaban:
+
+- **Proyecta el último cargo, no el promedio.** Una suscripción que subió de
+  35.000 a 42.000 tiene un promedio de "unos 39.000", y 39.000 no es lo que van
+  a cobrar. Para lo que ya pasó el promedio sirve; para lo que viene, no.
+- **La fecha sale de `lastDate + intervalo mediano`, no de "dentro de 30 días,
+  cobra".** Conserva la fase: una que cobra el día 5 y otra el día 28 no son lo
+  mismo aunque ambas caigan este mes. Y el intervalo se **mide** sobre los cargos
+  reales, porque la detección no sabe que todo lo que encuentra es mensual.
+- **Lo cancelado no se proyecta.** Un recurrente que no aparece hace más de 45
+  días sale del cálculo. Aquí el informe y la previsión discrepan a propósito: la
+  lista incluye lo que se canceló, el dinero que va a salir no.
+
+**Un límite del detector que salió al construir esto:** `MIN_MONTHS` cuenta
+meses *calendario* distintos, así que una suscripción semanal es invisible para
+`detectRecurring` — tres cargos en un mes no cuentan. Todo lo que llega a la
+proyección es de 10 días o más. No es un bug de la proyección, pero está fijado
+con un test en vez de discoverlo en seis meses.
+
+Effort **M**, hecho. 14 tests.
+
+### 1.6 Ranking de comercios — HECHO
 
 *"Tus 5 comercios principales este mes"*, con total y variación contra el mes
-anterior. Effort **S** — es un `GROUP BY payee`.
+anterior. Effort **S**, era un `GROUP BY payee`.
+
+La pregunta es distinta de la del ranking por categoría y la respuesta también:
+un gasto puede estar en "restaurantes" seis meses y ser siempre el mismo
+restaurante, y saberlo es lo que permite **decidir** algo — cancelar, cambiar de
+plan — en vez de solo notar que el número creció.
+
+Tres cosas que el `GROUP BY` no daba y que sí importaban:
+
+- **Ordena por el delta, no por el total.** "Supermercado" puede ser lo más
+  grande del mes y "Rappi" lo que más subió. La tarjeta responde "¿qué cambió?",
+  que es lo que la tarjeta de al lado responde; dos rankings distintos por el
+  mismo conjunto de filas serían dos preguntas con la misma respuesta.
+- **Los comercios sin payee se excluyen, no se agrupan.** Un cubo "sin comercio"
+  sería todos los retiros y cargos de tarjeta que nunca tuvieron nombre, ordenado
+  contra tiendas de verdad: un número sin sentido que además quedaría arriba.
+- **No es split-aware, a diferencia del agregado por categoría.** Un split
+  reatribuye un retiro a otras *categorías*; no cambia a quién se le pagó. Sumar
+  las partes de un split para inflar el total de un comercio contaría ese
+  retiro dos veces.
+
+**La comparación se extrajo, no se copió.** `buildCategoryDeltas` y
+`buildPayeeDeltas` hacen lo mismo con otra clave, así que la lógica — qué entra
+cuando algo desaparece, y que dos monedas nunca se sumen — vive una vez en
+`src/lib/deltas.ts`. Los 7 tests de la tarjeta de categorías siguen pasando sin
+tocarse, que es lo que prueba que la extracción no cambió nada.
+
+**El total enlaza a los movimientos, con un filtro de verdad.** `auditLink` no
+tenía forma de filtrar por comercio, y buscar el nombre del comercio con `q`
+devolvería además toda fila cuya descripción lo contenga: un conjunto más grande
+que no suma lo de al lado. Se añadió `payee` a los filtros de la tabla.
+
+Escribir ese filtro destapó un hueco real: `?payee=` a medio escribir llegaba al
+`WHERE` como `payee = ''` y **no devolvía ninguna fila** — una lista vacía en vez
+de la lista sin filtrar. El mismo hueco estaba en `?account=`. Los dos ahora
+degradan a "todo", con test.
+
+Effort **M**, hecho. 6 tests para el envoltura; la lógica compartida ya estaba
+cubierta.
 
 ---
 
@@ -346,17 +482,77 @@ existe pero hay que entrar al diálogo completo para agregarlo. Un
 **"Desglosar" rápido** en la fila, con los splits usados recientemente
 sugeridos. Effort **S**–**M**.
 
-### 2.4 Sugerencias de categoría mientras escribes
+### 2.4 Sugerencias de categoría mientras escribes — HECHO
 
 Hoy el motor de reglas existe (`applyRulesToTransactions`) pero se ejecuta en
 lote desde una tabla, no **mientras se digita**. Aplicar la regla en el
 momento del guardado evita tener que corregir después — que es el principio 4.
-Effort **S**, reutilizando `rules.ts`.
 
-### 2.5 Advertencia de duplicado
+**Sugerida, nunca aplicada. Y esa decisión resultó forzosa, no una
+preferencia.** El primer intento aplicaba las reglas en el servidor dentro de
+`createTransaction`, como red de seguridad para cualquier vía de entrada. Se
+quitó al ver lo que el formulario envía: `null` significa **dos cosas** —"no
+elegí categoría" y "elegí Sin categoría"— y no son la misma petición.
 
-El importador ya detecta duplicados por firma. Falta al **captura manual**: si
+Dejar un movimiento sin categoría a propósito es exactamente cómo llega al
+trabajo semanal que `/transacciones?category=none` existe para limpiar
+(§1.0). Un llenado automático en el servidor tiene que adivinar entre las dos, y
+adivinar mal categoriza el trabajo que el usuario iba a hacer él mismo. En el
+formulario esa distinción todavía es observable —el campo está intacto—, así que
+ahí sí se puede preguntar.
+
+El chip ofrece un clic. Si no se acepta, el movimiento se guarda tal cual: la
+ausencia de una regla no es razón para inventar un valor.
+
+**El motor se evalúa en un solo sitio.** `resolveRuleFields` en `rules.ts` lo
+resuelve ahora, y lo usan tanto la sugerencia como el "aplicar a todo" de la
+página de reglas. Un motor con dos implementaciones es uno cuya sugerencia está
+mal la mitad de las veces, sin forma de saber de cuál salió la fila que se
+guardó. La precedencia (gana la regla de mayor `sortOrder`) es la misma que
+tenía el lote, y por lo mismo la página de reglas muestra ese orden.
+
+Effort **M** (era S si se hubiera hecho a lo bruto), hecho. 13 tests, casi todos
+sobre lo que **no** debe pasar: que una regla sustituya una categoría elegida a
+mano, y que una acción apuntando a una categoría borrada se escriba.
+
+### 2.5 Advertencia de duplicado — HECHO
+
+El importador ya detecta duplicados por firma. Falta la **captura manual**: si
 el mismo payee + monto + fecha ya existe, avisar antes de crear. Effort **S**.
+
+**Avisa, no bloquea.** Dos compras idénticas el mismo día son dos compras, y solo
+quien está escribiendo puede saber cuál de las dos cosas es. Un formulario que
+se negara a guardar obligaría al usuario a buscar cómo saltarse la validación.
+El aviso aparece mientras se escribe (500 ms de debounce) y también al **editar**
+—corregir el monto de un movimiento para que cuadre con el estado de cuenta es
+justo cuando se copia uno que ya existe—.
+
+**La firma es distinta a la del importador, y por qué.** El importador compara
+`fecha|monto|descripción` porque la descripción es la que puso el banco. En
+entrada manual es texto libre, y dos copias del mismo movimiento rara vez
+coinciden palabra por palabra. Así que el comercio decide la **confianza** en
+lugar de la identidad, y hay dos niveles:
+
+- **`exacta`** — mismo comercio, o misma descripción normalizada. Casi con
+  seguridad la misma compra escrita dos veces. El aviso puede decir "ya existe".
+- **`probable`** — mismo monto el mismo día, sin nada que confirmar. El texto
+  tiene que decirlo de otra forma ("puede que sean compras distintas"), porque
+  dos cafés el mismo día son dos cafés.
+
+Las dos frases del aviso son deliberadamente distintas. Un texto que dice "esto
+ya está" sobre una coincidencia probable entrena al usuario a ignorar el aviso
+justo cuando sirve.
+
+**La fecha se compara en hora local**, con un test que fija los dos lados de la
+frontera de medianoche: un movimiento escrito a las 8 p. m. del 31 en Colombia
+es el 31 local, y `toISOString()` lo daría como 1 de septiembre — el mismo error
+de §3.1 aplicado a un aviso en vez de a un CSV. Y el monto se compara en valor
+absoluto, porque las transferencias se guardan con signo negativo y un gasto con
+signo positivo: el mismo movimiento en las dos mitades de la app no puede
+aparecer como duplicado de sí mismo.
+
+Effort **M**, hecho. 17 tests, casi todos sobre el falso positivo, que es el
+riesgo real de un aviso.
 
 ---
 
@@ -389,11 +585,70 @@ gráficas separadas, no un número. Con TRM manual mensual (basta, no hace falta
 API) se puede dar un patrimonio único y comparar meses con distinta
 composición de monedas. Effort **M**. Nueva tabla `exchange_rates`.
 
-### 3.3 Conciliación de cuenta
+### 3.3 Conciliación de cuenta — PARCIAL, y no por donde se pensaba
 
 Responder "¿cuánto tengo realmente?" comparando el saldo de un extracto nuevo
 contra el saldo que dice la app, y mostrando la diferencia. Es el control que
 falta: si algo está mal, hoy no hay forma de saberlo. Effort **M**.
+
+**Lo hecho es la otra mitad del problema, y resultó ser la urgente.** Antes de
+extraer saldos de los PDF se revisó cómo se calculan los saldos que ya se
+mostraban, y aparecieron **dos formas en que la app se inventa o pierde dinero
+sin dar un solo error**. No son fricción: son números que mienten, que es la
+categoría que §0.7 pone primero.
+
+**(a) Los splits podían atribuir más plata de la que salía.** El invariante de
+`splits.ts` —atribuir dinero nunca lo crea ni lo destruye, solo lo mueve— estaba
+escrito en los tests pero **nada lo exigía en la frontera**. Cada split solo se
+validaba como "número no negativo", así que un retiro de 100.000 se podía
+desglosar en 150.000 de mercado más 80.000 de carnes. Los dos splits se contaban
+completos y el remanente negativo se descartaba en silencio (`if (remainder > 0)`),
+de modo que **categorías, presupuesto y estadísticas terminaban con 230.000 de
+gasto de un movimiento de 100.000**. Plata inventada.
+
+Ahora `findOversplit` lo rechaza en `createTransaction` y en `updateTransaction`,
+con el exceso en el mensaje. Se **rechaza en vez de recortar**: recortar escribiría
+un desglose distinto del que el usuario compuso, y el formulario mostraría
+números que ya no cuadran con el diálogo. Un peso de más ya es un peso de más: no
+hay tolerancia.
+
+Editar es donde más fácil se dispara, y por eso también está ahí: bajar el monto
+de un movimiento sin tocar los splits que ya había.
+
+**(b) Los movimientos anteriores al saldo de referencia se contaban en todo
+excepto en el saldo.** `currentBalances` (y su gemelo SQL) sólo suma lo posterior
+a `referenceDate` — para eso existe la fecha de referencia, el saldo de partida
+ya lo incluye. Pero **todas** las estadísticas de gasto sí lo cuentan. El
+resultado es una app que dice "$412.000 gastados en agosto" con un saldo que no
+refleja ni uno de esos pesos.
+
+Pasa al importar un extracto de un periodo anterior, o al mover la fecha de
+referencia de una cuenta a una más reciente. Ninguna de las dos es un error de la
+app: es el usuario cambiando de opinión sobre dónde empieza su historial. Lo
+que faltaba era **decírselo**.
+
+La comparación es `date <= referenceDate`, no `<`: la del saldo es estrictamente
+mayor, así que un movimiento **del mismo día** tampoco suma. Es el mismo detalle
+del CSV (§3.1) y por la misma razón importa.
+
+**Lo que se hizo con eso: una tarjeta de integridad en el dashboard** que solo
+aparece cuando hay algo que reportar, y que enlaza a los movimientos y a la
+cuenta afectada. Es un control, no un arreglo: señala dónde mirar y dice cuál es
+la forma de arreglarlo. Una tarjeta permanente de salud en el inicio sería ruido,
+y el día que importa tiene que ser la primera que se ve.
+
+El criterio de las dos funciones puras (`ledger-integrity.ts`) es **cuándo no
+reportar**: un aviso que señala una cuenta sana hace que se apague el aviso, que
+es justo lo contrario de lo que se busca. 21 tests, casi todos sobre el falso
+positivo, más una verificación de punta a punta contra la base real.
+
+**Lo que sigue pendiente de esta sección:** comparar el saldo contra el que trae
+el PDF. El parser de Bancolombia **ya captura la columna de saldo y la tira** —el
+regex la exige para que la fila calce y nunca la guarda—, así que el groundwork
+está a medio hacer. No se hizo a ciegas porque un saldo mal extraído produce un
+"tu saldo está descuadrado en X" que en realidad es un bug del parser, y un aviso
+que miente entrena a ignorar el aviso. `statement-parser.ts` sigue sin un solo
+test porque no hay un PDF real como fixture (§4.3); hace falta eso antes.
 
 ### 3.4 Vista de “cómo calculé este número” — HECHO
 

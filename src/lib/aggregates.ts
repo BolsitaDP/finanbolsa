@@ -195,7 +195,11 @@ export async function movementByAccountAndMonth(
 export type CategoryMonthTotal = { categoryId: string; currency: string; amountMinor: number };
 
 /**
- * Expense total per (category, currency) for one month, split-aware.
+ * Expense total per (category, month, currency) for the given months, split-aware.
+ *
+ * The multi-month form of `spendByCategoryInMonth`, which delegates here. The
+ * outlier alert needs a category's whole recent history in one pass, and calling
+ * the single-month version six times would mean six scans of the same rows.
  *
  * Hybrid on purpose. SQL handles the thousands of ordinary expenses with a
  * GROUP BY; the handful of transactions that actually carry splits are loaded
@@ -207,19 +211,23 @@ export type CategoryMonthTotal = { categoryId: string; currency: string; amountM
  * The split transactions are EXCLUDED from the GROUP BY so their amounts are
  * not counted twice — once under their own category and once via their splits.
  */
-export async function spendByCategoryInMonth(month: string): Promise<CategoryMonthTotal[]> {
+export async function spendByCategoryByMonth(
+  months: string[]
+): Promise<(CategoryMonthTotal & { month: string })[]> {
+  const totals = new Map<string, CategoryMonthTotal & { month: string }>();
+  const add = (categoryId: string, currency: string, month: string, amountMinor: number) => {
+    const key = `${categoryId}|${currency}|${month}`;
+    const entry = totals.get(key) ?? { categoryId, currency, month, amountMinor: 0 };
+    entry.amountMinor += amountMinor;
+    totals.set(key, entry);
+  };
+
+  if (months.length === 0) return [];
+
   const splitRows = await db
     .selectDistinct({ transactionId: transactionSplits.transactionId })
     .from(transactionSplits);
   const splitTxIds = splitRows.map((row) => row.transactionId);
-
-  const totals = new Map<string, CategoryMonthTotal>();
-  const add = (categoryId: string, currency: string, amountMinor: number) => {
-    const key = `${categoryId}|${currency}`;
-    const entry = totals.get(key) ?? { categoryId, currency, amountMinor: 0 };
-    entry.amountMinor += amountMinor;
-    totals.set(key, entry);
-  };
 
   // --- the ordinary majority, summed by SQLite
   const exclusion =
@@ -229,18 +237,25 @@ export async function spendByCategoryInMonth(month: string): Promise<CategoryMon
           sql`, `
         )})`
       : sql``;
-  const rows = await db.all<{ category_id: string; currency: string; total: number }>(sql`
+  const monthList = sql.join(months.map((month) => sql`${month}`), sql`, `);
+  const rows = await db.all<{
+    category_id: string;
+    currency: string;
+    month: string;
+    total: number;
+  }>(sql`
     select ${transactions.categoryId} as category_id,
            ${transactions.currency} as currency,
+           ${transactionMonth} as month,
            sum(${transactions.amountMinor}) as total
     from ${transactions}
     where ${transactions.deletedAt} is null
       and ${transactions.type} = 'expense'
       and ${transactions.categoryId} is not null
-      and ${transactionMonth} = ${month}${exclusion}
-    group by category_id, currency
+      and ${transactionMonth} in (${monthList})${exclusion}
+    group by category_id, currency, month
   `);
-  for (const row of rows) add(row.category_id, row.currency, Number(row.total));
+  for (const row of rows) add(row.category_id, row.currency, row.month, Number(row.total));
 
   // --- the split ones, attributed in JS
   if (splitTxIds.length > 0) {
@@ -250,15 +265,17 @@ export async function spendByCategoryInMonth(month: string): Promise<CategoryMon
       categoryId: string | null;
       amountMinor: number;
       currency: string;
+      month: string;
     }>(sql`
       select ${transactions.id} as id,
              ${transactions.categoryId} as categoryId,
              ${transactions.amountMinor} as amountMinor,
-             ${transactions.currency} as currency
+             ${transactions.currency} as currency,
+             ${transactionMonth} as month
       from ${transactions}
       where ${transactions.deletedAt} is null
         and ${transactions.type} = 'expense'
-        and ${transactionMonth} = ${month}
+        and ${transactionMonth} in (${monthList})
         and id in (${list})
     `);
     if (splitTx.length > 0) {
@@ -267,7 +284,7 @@ export async function spendByCategoryInMonth(month: string): Promise<CategoryMon
       for (const tx of splitTx) {
         for (const alloc of categoryAllocations(tx, splitsByTx)) {
           if (!alloc.categoryId) continue;
-          add(alloc.categoryId, tx.currency, alloc.amountMinor);
+          add(alloc.categoryId, tx.currency, tx.month, alloc.amountMinor);
         }
       }
     }
@@ -276,7 +293,49 @@ export async function spendByCategoryInMonth(month: string): Promise<CategoryMon
   return [...totals.values()].sort((a, b) => b.amountMinor - a.amountMinor);
 }
 
+/** One month, which is what every page but the outlier alert asks for. */
+export async function spendByCategoryInMonth(month: string): Promise<CategoryMonthTotal[]> {
+  const rows = await spendByCategoryByMonth([month]);
+  return rows.map(({ categoryId, currency, amountMinor }) => ({ categoryId, currency, amountMinor }));
+}
+
 export type { RecurringCandidate } from "@/lib/recurring";
+
+export type PayeeMonthTotal = { payeeId: string; currency: string; amountMinor: number };
+
+/**
+ * Expense total per (payee, currency) for one month, largest first.
+ *
+ * Deliberately NOT split-aware, unlike `spendByCategoryInMonth`. A split
+ * reattributes a lump charge to other *categories*; it doesn't change who was
+ * paid. The supermarket withdrawal split into " mercado" and "carnes" was still
+ * one payment to one merchant, and inflating that merchant's total to the sum of
+ * the split parts would double-count it.
+ *
+ * Rows without a payee are excluded rather than collected into a "sin comercio"
+ * bucket. That bucket would be every unrelated cash withdrawal and card charge
+ * that never got a merchant name, ranked against real shops — a number with no
+ * meaning that would sit at the top of the list.
+ */
+export async function spendByPayeeInMonth(month: string): Promise<PayeeMonthTotal[]> {
+  const rows = await db.all<{ payee_id: string; currency: string; total: number }>(sql`
+    select ${transactions.payeeId} as payee_id,
+           ${transactions.currency} as currency,
+           sum(${transactions.amountMinor}) as total
+    from ${transactions}
+    where ${transactions.deletedAt} is null
+      and ${transactions.type} = 'expense'
+      and ${transactions.payeeId} is not null
+      and ${transactionMonth} = ${month}
+    group by payee_id, currency
+    order by total desc
+  `);
+  return rows.map((row) => ({
+    payeeId: row.payee_id,
+    currency: row.currency,
+    amountMinor: Number(row.total),
+  }));
+}
 
 /**
  * The only columns recurring detection looks at, and only the rows it can use.
@@ -306,4 +365,56 @@ export async function recurringCandidates(): Promise<RecurringCandidate[]> {
         or(isNotNull(transactions.payeeId), isNotNull(transactions.description))
       )
     );
+}
+
+export type IntegrityInput = {
+  accounts: { id: string; name: string; referenceDate: Date }[];
+  /** Non-deleted movements, with only the columns the check reads. */
+  movements: {
+    id: number;
+    accountId: string;
+    date: Date;
+    amountMinor: number;
+    currency: string;
+    description: string | null;
+  }[];
+  /** Every split, joined back to its parent by the caller. */
+  splits: { transactionId: number; amountMinor: number }[];
+};
+
+/**
+ * The two ways this app's own arithmetic can end up lying, gathered for the
+ * dashboard. See `ledger-integrity.ts` for why each one produces a wrong number
+ * with no error.
+ *
+ * Both queries are the same scan the balance does, reusing the joins it already
+ * needs, so this costs one extra pass over a range the dashboard is touching
+ * anyway. It only runs on the dashboard, not on every page: it is a check, not a
+ * thing to recompute while someone is typing.
+ */
+export async function loadIntegrityInput(): Promise<IntegrityInput> {
+  const [accountRows, movementRows, splitRows] = await Promise.all([
+    db
+      .select({ id: accounts.id, name: accounts.name, referenceDate: accounts.referenceDate })
+      .from(accounts),
+    db
+      .select({
+        id: transactions.id,
+        accountId: transactions.accountId,
+        date: transactions.date,
+        amountMinor: transactions.amountMinor,
+        currency: transactions.currency,
+        description: transactions.description,
+      })
+      .from(transactions)
+      .where(isNull(transactions.deletedAt)),
+    db
+      .select({
+        transactionId: transactionSplits.transactionId,
+        amountMinor: transactionSplits.amountMinor,
+      })
+      .from(transactionSplits),
+  ]);
+
+  return { accounts: accountRows, movements: movementRows, splits: splitRows };
 }

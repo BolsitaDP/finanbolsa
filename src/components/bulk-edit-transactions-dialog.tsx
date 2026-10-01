@@ -13,7 +13,12 @@ import {
   countWithSplits,
   type BulkTransactionPatch,
 } from "@/app/(app)/transacciones/actions";
-import { TRANSACTION_TYPES, TRANSACTION_TYPE_LABELS, type TransactionType } from "@/lib/enums";
+import {
+  TRANSACTION_TYPES,
+  TRANSACTION_TYPE_LABELS,
+  labelItems,
+  type TransactionType,
+} from "@/lib/enums";
 import { projectTripItems } from "@/lib/project-options";
 
 type Account = { id: string; name: string };
@@ -146,7 +151,7 @@ export function BulkEditTransactionsDialog({
           onEnabledChange={setTypeEnabled}
           value={type}
           onValueChange={setType}
-          items={Object.fromEntries(TRANSACTION_TYPES.map((t) => [t, TRANSACTION_TYPE_LABELS[t]]))}
+          items={labelItems(TRANSACTION_TYPES, TRANSACTION_TYPE_LABELS)}
           placeholder="Selecciona..."
         />
         <BulkEditSelectField

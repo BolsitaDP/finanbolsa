@@ -10,6 +10,7 @@ import {
   CATEGORY_KIND_LABELS,
   CATEGORY_STATUSES,
   CATEGORY_STATUS_LABELS,
+  labelItems,
   type CategoryKind,
   type CategoryStatus,
 } from "@/lib/enums";
@@ -62,7 +63,7 @@ export function BulkEditCategoriesDialog({
         onEnabledChange={setKindEnabled}
         value={kind}
         onValueChange={setKind}
-        items={Object.fromEntries(CATEGORY_KINDS.map((k) => [k, CATEGORY_KIND_LABELS[k]]))}
+        items={labelItems(CATEGORY_KINDS, CATEGORY_KIND_LABELS)}
         placeholder="Selecciona..."
       />
       <BulkEditSelectField
@@ -71,7 +72,7 @@ export function BulkEditCategoriesDialog({
         onEnabledChange={setStatusEnabled}
         value={status}
         onValueChange={setStatus}
-        items={Object.fromEntries(CATEGORY_STATUSES.map((s) => [s, CATEGORY_STATUS_LABELS[s]]))}
+        items={labelItems(CATEGORY_STATUSES, CATEGORY_STATUS_LABELS)}
         placeholder="Selecciona..."
       />
     </BulkEditDialog>

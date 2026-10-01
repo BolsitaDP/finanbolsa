@@ -36,6 +36,7 @@ describe("parseTransactionFilters", () => {
         type: "expense",
         account: "acc-2",
         category: "cat-3",
+        payee: "payee-4",
         month: "2026-08",
         sort: "amountMinor",
         dir: "asc",
@@ -47,12 +48,31 @@ describe("parseTransactionFilters", () => {
       type: "expense",
       account: "acc-2",
       category: "cat-3",
+      payee: "payee-4",
       month: "2026-08",
       sort: "amountMinor",
       dir: "asc",
       page: 3,
       pageSize: 100,
     });
+  });
+
+  it("defaults the payee filter to all, including when empty", () => {
+    expect(parseTransactionFilters({}).payee).toBe("all");
+    expect(parseTransactionFilters({ payee: "" }).payee).toBe("all");
+  });
+
+  it("defaults an empty account filter to all, not to a value that matches nothing", () => {
+    // El mismo hueco que el de `payee`, encontrado al arreglar el otro: un
+    // `?account=` a medio escribir deja la lista vacía en vez de sin filtrar.
+    expect(parseTransactionFilters({ account: "" }).account).toBe("all");
+  });
+
+  it("round-trips the payee filter through the query string", () => {
+    // El ranking de comercios enlaza a este filtro, así que perderlo al salir
+    // abriría el total sobre una lista que no le suma.
+    const parsed = parseTransactionFilters({ payee: "payee-rappi", month: "2026-08" });
+    expect(filtersToQueryString(parsed)).toBe("?payee=payee-rappi&month=2026-08");
   });
 
   it("defaults the month filter to all", () => {
@@ -217,6 +237,7 @@ describe("filtersToQueryString", () => {
       type: "expense",
       account: "acc-2",
       category: "none",
+      payee: "payee-rappi",
       sort: "amountMinor",
       dir: "asc",
       page: 3,

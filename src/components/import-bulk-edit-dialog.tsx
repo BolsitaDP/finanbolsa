@@ -4,7 +4,12 @@ import { useState } from "react";
 
 import { BulkEditDialog } from "@/components/data-table/bulk-edit-dialog";
 import { BulkEditCategoryField, BulkEditSelectField } from "@/components/data-table/bulk-edit-field";
-import { TRANSACTION_TYPES, TRANSACTION_TYPE_LABELS, type TransactionType } from "@/lib/enums";
+import {
+  TRANSACTION_TYPES,
+  TRANSACTION_TYPE_LABELS,
+  labelItems,
+  type TransactionType,
+} from "@/lib/enums";
 import { projectTripItems } from "@/lib/project-options";
 
 type Account = { id: string; name: string };
@@ -79,7 +84,7 @@ export function ImportBulkEditDialog({
           onEnabledChange={setTypeEnabled}
           value={type}
           onValueChange={setType}
-          items={Object.fromEntries(TRANSACTION_TYPES.map((t) => [t, TRANSACTION_TYPE_LABELS[t]]))}
+          items={labelItems(TRANSACTION_TYPES, TRANSACTION_TYPE_LABELS)}
           placeholder="Selecciona..."
         />
         <BulkEditCategoryField

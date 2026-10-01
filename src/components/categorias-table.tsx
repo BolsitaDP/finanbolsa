@@ -18,7 +18,9 @@ import { DeleteButton } from "@/components/delete-button";
 import { bulkDeleteCategories, deleteCategory } from "@/app/(app)/categorias/actions";
 import {
   CATEGORY_KIND_LABELS,
+  CATEGORY_STATUS_LABELS,
   type CategoryKind,
+  type CategoryStatus,
 } from "@/lib/enums";
 import type { categories } from "@/db/schema";
 
@@ -161,6 +163,14 @@ export function CategoriasTable({
       {
         accessorKey: "status",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Estado" />,
+        // Sin `cell`, TanStack renderizaba el valor crudo de la base: una
+        // columna "Estado" que decía "active" al lado de "Activa" en la tabla de
+        // cuentas. El mismo patrón que en `cuentas-table.tsx`.
+        cell: ({ row }) => (
+          <Badge variant={row.original.status === "active" ? "secondary" : "outline"}>
+            {CATEGORY_STATUS_LABELS[row.original.status as CategoryStatus] ?? row.original.status}
+          </Badge>
+        ),
         meta: { label: "Estado" },
       },
       {

@@ -1,13 +1,17 @@
 "use server";
 
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lte } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
 import { db } from "@/db";
-import { transactions, transactionSplits } from "@/db/schema";
+import { transactions, transactionSplits, payees } from "@/db/schema";
+import { buildDuplicateReport, findDuplicates } from "@/lib/duplicate-check";
+import { formatDate, formatMoney } from "@/lib/format";
 import {
   bulkTransactionPatchSchema,
+  duplicateCheckSchema,
   findInvalidTransfers,
+  findOversplit,
   parseOrThrow,
   splitInputSchema,
   transactionInputSchema,
@@ -35,11 +39,46 @@ async function replaceSplits(transactionId: number, splits: SplitInput[]) {
   }
 }
 
+/**
+ * Refuses a breakdown that attributes more than the transaction's own amount.
+ *
+ * A split moves money between categories; it cannot create it. Without this the
+ * excess is silently dropped from the remainder and the categories end up
+ * claiming more than was ever spent — see `findOversplit` for the full
+ * consequence. Refused rather than clamped: clamping would quietly write a
+ * different breakdown than the one the user composed, and the form would show
+ * numbers that no longer match the dialog.
+ */
+function assertSplitsFit(parentAmountMinor: number, currency: string, splits: SplitInput[]) {
+  const oversplit = findOversplit(splits, parentAmountMinor);
+  if (!oversplit) return;
+  throw new Error(
+    `El desglose suma ${formatMoney(oversplit.splitTotal, currency)} pero el movimiento es de ` +
+      `${formatMoney(parentAmountMinor, currency)}. No se puede atribuir más plata de la que salió.`
+  );
+}
+
 export async function createTransaction(input: TransactionInput, splits: SplitInput[] = []) {
   // The exported types are compile-time only: a server action is an endpoint
   // that accepts whatever JSON it is posted. Validate for real before writing.
   const tx = parseOrThrow(transactionInputSchema, input);
   const parsedSplits = splits.map((s) => parseOrThrow(splitInputSchema, s));
+
+  // Deliberately NOT applying the auto-categorisation rules here, even though
+  // `resolveRuleFieldsFor` exists and the suggestion in the form already used it.
+  // The form sends `null` both for "I never picked a category" and for "I chose
+  // Sin categoría", and those are not the same request: leaving a transaction
+  // uncategorised on purpose is how it lands in the weekly backlog that
+  // `/transacciones?category=none` exists to clear (ROADMAP §1.0). A server-side
+  // fill would have to pick one of the two, and guessing wrong silently
+  // categorises work the user meant to do themselves.
+  //
+  // So the suggestion is shown and applied in the form, where "the user didn't
+  // touch it" is still observable, and the action saves exactly what it was
+  // sent. The resolver is shared either way, so the suggestion can't disagree
+  // with the batch "apply to all" on the rules page.
+
+  assertSplitsFit(tx.amountMinor, tx.currency, parsedSplits);
 
   const [inserted] = await db
     .insert(transactions)
@@ -70,6 +109,11 @@ export async function setTransactionCategory(id: number, categoryId: string | nu
 export async function updateTransaction(id: number, input: TransactionInput, splits: SplitInput[] = []) {
   const tx = parseOrThrow(transactionInputSchema, input);
   const parsedSplits = splits.map((s) => parseOrThrow(splitInputSchema, s));
+
+  // Editar es donde más fácil se dispara: bajar el monto de la transacción sin
+  // tocar los splits que ya había leaves la atribución pidiendo más plata de la
+  // que el movimiento representa.
+  assertSplitsFit(tx.amountMinor, tx.currency, parsedSplits);
 
   // `updatedAt` existed in the schema and was never written by any action, so
   // it silently always equalled `createdAt`. A field that lies about how fresh
@@ -164,4 +208,57 @@ export async function bulkUpdateTransactions(ids: number[], patch: BulkTransacti
     .set({ ...clean, updatedAt: new Date() })
     .where(inArray(transactions.id, ids));
   revalidateAll();
+}
+
+/**
+ * "¿No estás agregando esto dos veces?" — ROADMAP §2.5.
+ *
+ * Avisa, nunca bloquea. El caso de un doble clic es real y el de dos compras
+ * idénticas el mismo día también, y ninguna de las dos se puede distinguir con
+ * certeza desde el formulario: decidir eso es del usuario.
+ *
+ * La consulta es un `WHERE` sobre una fecha, que es lo que hace barato
+ * mostrarla mientras se escribe en lugar de solo al guardar. Se leen seis
+ * columnas de las diecinueve, por lo mismo que `recurringCandidates`.
+ */
+export async function checkDuplicates(input: {
+  id?: number;
+  date: Date;
+  amountMinor: number;
+  currency: string;
+  payeeId: string | null;
+  description: string | null;
+}) {
+  const parsed = duplicateCheckSchema.parse(input);
+  const start = new Date(parsed.date);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(parsed.date);
+  end.setHours(23, 59, 59, 999);
+
+  const rows = await db
+    .select({
+      id: transactions.id,
+      date: transactions.date,
+      amountMinor: transactions.amountMinor,
+      currency: transactions.currency,
+      payeeId: transactions.payeeId,
+      description: transactions.description,
+      payeeName: payees.name,
+    })
+    .from(transactions)
+    .leftJoin(payees, eq(payees.id, transactions.payeeId))
+    .where(
+      and(isNull(transactions.deletedAt), gte(transactions.date, start), lte(transactions.date, end))
+    );
+
+  const matches = findDuplicates(parsed, rows);
+  return buildDuplicateReport(
+    matches,
+    new Map(
+      rows.map((r) => [
+        r.id,
+        { dateLabel: formatDate(r.date), description: r.description, payeeName: r.payeeName },
+      ])
+    )
+  );
 }

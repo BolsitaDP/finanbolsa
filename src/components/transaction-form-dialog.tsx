@@ -28,10 +28,21 @@ import {
 import { Input } from "@/components/ui/input";
 import { Combobox } from "@/components/ui/combobox";
 import { CategorySelect } from "@/components/category-select";
+import {
+  DuplicateWarning,
+  RuleSuggestionChip,
+  useDuplicateWarning,
+  useRuleSuggestion,
+} from "@/components/rule-suggestion";
 
 import { createTransaction, updateTransaction, type SplitInput } from "@/app/(app)/transacciones/actions";
 import { CreateRuleFromTransactionDialog } from "@/components/create-rule-from-transaction-dialog";
-import { CURRENCIES, TRANSACTION_TYPES, TRANSACTION_TYPE_LABELS } from "@/lib/enums";
+import {
+  CURRENCIES,
+  TRANSACTION_TYPES,
+  TRANSACTION_TYPE_LABELS,
+  labelItems,
+} from "@/lib/enums";
 import { fromDateInputValue, toDateInputValue } from "@/lib/date-input";
 import { formatMoney } from "@/lib/format";
 import { projectTripItems } from "@/lib/project-options";
@@ -216,6 +227,30 @@ export function TransactionFormDialog({
   const showSplits = !isTransfer && type === "expense";
   const canCreateRule = Boolean(description.trim()) && (categoryId !== "none" || payeeId !== "none");
 
+  // ROADMAP §2.4. Only for new transactions: a rule has nothing useful to say
+  // about someone correcting a row that already exists, and suggesting a
+  // different category while they fix the amount would be noise.
+  const ruleSuggestion = useRuleSuggestion({
+    description,
+    payeeId,
+    accountId,
+    amountMinor: amountMinorStr,
+    enabled: !transaction && !isTransfer,
+  });
+
+  // ROADMAP §2.5. Se comprueba también al editar, no solo al crear: corregir el
+  // monto de un movimiento para que cuadre con el estado de cuenta es
+  // exactamente cuando se copia uno que ya existe.
+  const duplicateReport = useDuplicateWarning({
+    id: transaction?.id,
+    date: form.watch("date"),
+    amountMinor: amountMinorStr,
+    currency,
+    payeeId,
+    description,
+    enabled: !isTransfer,
+  });
+
   const splitTotal = splitRows.reduce((s, r) => s + (Number(r.amountMinor) || 0), 0);
   const remainder = (Number(amountMinorStr) || 0) - splitTotal;
 
@@ -369,7 +404,7 @@ export function TransactionFormDialog({
                       <Combobox
                         value={field.value}
                         onValueChange={field.onChange}
-                        items={Object.fromEntries(TRANSACTION_TYPES.map((t) => [t, TRANSACTION_TYPE_LABELS[t]]))}
+                        items={labelItems(TRANSACTION_TYPES, TRANSACTION_TYPE_LABELS)}
                         className="w-full"
                       />
                     </FormControl>
@@ -464,6 +499,31 @@ export function TransactionFormDialog({
                 />
               )}
             </div>
+
+            {/* La sugerencia va justo debajo de los campos que propone cambiar,
+                no arriba del formulario: si aparece primero, el chip queda
+                desplazado por los campos que el usuario está mirando. */}
+            {ruleSuggestion && (
+              <RuleSuggestionChip
+                suggestion={ruleSuggestion}
+                busy={isPending}
+                onApply={(next) => {
+                  if (next.categoryId) form.setValue("categoryId", next.categoryId);
+                  if (next.payeeId) form.setValue("payeeId", next.payeeId);
+                }}
+              />
+            )}
+
+            {/* El aviso de duplicado va después de la sugerencia y no en su lugar:
+                las dos cosas se ofrezcan a la vez, el aviso es el que tiene una
+                consecuencia real y es el que no se puede perder de vista. */}
+            {duplicateReport && (
+              <DuplicateWarning
+                report={duplicateReport}
+                currency={currency}
+                amountMinor={Number(amountMinorStr) || 0}
+              />
+            )}
 
             <div className="grid grid-cols-2 gap-3">
               <FormField

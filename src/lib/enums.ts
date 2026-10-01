@@ -55,3 +55,18 @@ export const CATEGORY_STATUS_LABELS: Record<CategoryStatus, string> = {
   active: "Activa",
   archived: "Archivada",
 };
+
+/**
+ * The `{ valor: etiqueta }` shape every select and picker in the app wants.
+ *
+ * This existed inline nine times as `Object.fromEntries(TYPES.map((t) => [t,
+ * LABELS[t]]))`, and four of those nine had drifted into showing the raw value
+ * instead — `t.replace("_", " ")` for account types, and plain `t` for the
+ * category and account status pickers. That is how a Spanish form ended up
+ * offering "credit card" and "active" as choices. One helper removes the
+ * repetition and makes it impossible to translate one picker and forget the
+ * next.
+ */
+export function labelItems<K extends string>(values: readonly K[], labels: Record<K, string>) {
+  return Object.fromEntries(values.map((value) => [value, labels[value]]));
+}

@@ -57,10 +57,12 @@ export function makeTransaction(overrides: Partial<Transaction> = {}): Transacti
 /**
  * Midday UTC on purpose.
  *
- * `recurring.ts` buckets months with `toISOString()` (UTC) while `month.ts`
- * uses local `getFullYear`/`getMonth`. A 12:00Z timestamp lands on the same
- * calendar day in every timezone from UTC-12 to UTC+12, so these fixtures
- * can't drift into a neighbouring month depending on where the suite runs.
+ * Every month bucket in the app is LOCAL time (`monthKey()` in `month.ts`, and
+ * `transactionMonth` in `month-sql.ts` reproducing it), while a timestamp
+ * written as `new Date("2025-01-15")` is midnight UTC — which is the previous
+ * day in the Americas. A 12:00Z timestamp lands on the same calendar day in
+ * every timezone from UTC-12 to UTC+12, so these fixtures can't drift into a
+ * neighbouring month depending on where the suite runs.
  */
 function utc(iso: string): Date {
   return new Date(`${iso}T12:00:00Z`);

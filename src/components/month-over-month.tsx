@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatMoney } from "@/lib/format";
 import { auditLink } from "@/lib/transactions-query";
+import { buildDeltas } from "@/lib/deltas";
 import type { CategoryMonthTotal } from "@/lib/aggregates";
 
 /**
@@ -31,43 +32,26 @@ export type CategoryDelta = {
 /**
  * Compara dos meses y devuelve las categorías ordenadas por lo que MÁS subió.
  *
- * Ordenar por delta descendente pone arriba lo que más dolió, que es lo que uno
- * busca al abrir la app. LosDescensos aparecen al final, con su propio signo.
+ * Toda la lógica vive en `buildDeltas` (`src/lib/deltas.ts`), compartida con la
+ * tarjeta de comercios: qué entra cuando algo desaparece, y que dos monedas
+ * nunca se sumen, son reglas que no pueden depender de quién llama. Esta
+ * función solo decide qué clave agrupa y qué nombre lleva el campo.
  */
 export function buildCategoryDeltas(
   current: CategoryMonthTotal[],
   previous: CategoryMonthTotal[],
   limit: number
 ): CategoryDelta[] {
-  const key = (d: { categoryId: string; currency: string }) => `${d.categoryId}|${d.currency}`;
-  const before = new Map(previous.map((entry) => [key(entry), entry.amountMinor]));
+  const toInput = (rows: CategoryMonthTotal[]) =>
+    rows.map((row) => ({ key: row.categoryId, currency: row.currency, amountMinor: row.amountMinor }));
 
-  const deltas = current.map((entry) => {
-    const prior = before.get(key(entry)) ?? 0;
-    return {
-      categoryId: entry.categoryId,
-      currency: entry.currency,
-      current: entry.amountMinor,
-      previous: prior,
-      delta: entry.amountMinor - prior,
-    };
-  });
-
-  // Categorías que existían el mes pasado y desaparecieron este también son
-  // una respuesta ("dejé de gastar en esto"), así que entran con delta negativo.
-  const currentKeys = new Set(current.map(key));
-  for (const entry of previous) {
-    if (currentKeys.has(key(entry))) continue;
-    deltas.push({
-      categoryId: entry.categoryId,
-      currency: entry.currency,
-      current: 0,
-      previous: entry.amountMinor,
-      delta: -entry.amountMinor,
-    });
-  }
-
-  return deltas.sort((a, b) => b.delta - a.delta).slice(0, limit);
+  return buildDeltas(toInput(current), toInput(previous), limit).map((d) => ({
+    categoryId: d.key,
+    currency: d.currency,
+    current: d.current,
+    previous: d.previous,
+    delta: d.delta,
+  }));
 }
 
 function DeltaPill({ delta, currency }: { delta: number; currency: string }) {
